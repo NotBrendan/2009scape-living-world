@@ -1,0 +1,17 @@
+{
+  "_about": "Batch 25 Magic AFK spells (R5). Ids, levels, runes and xp from the design notes (javap on server.jar, 2026-10-30). fallback = the next spell down the ladder (refinement 7.1); trainTo = the Magic level the refusal names. delay = ticks between casts (UNVERIFIED: the server's own magic delay decides; a cast refused for the delay counts toward 'cast failed twice'). staffs: rune id -> staff ids that stand in for it when wielded.",
+  "staffs": {
+    "554": [1387, 1393, 1401, 3053, 3054]
+  },
+  "spells": [
+    {"key": "alch_low", "name": "Low alchemy", "handler": "alch_low", "id": 13, "level": 21, "xp": 31, "delay": 5,
+     "runes": [{"id": 554, "amount": 3, "name": "fire rune"}, {"id": 561, "amount": 1, "name": "nature rune"}],
+     "fallback": null, "trainTo": 21},
+    {"key": "alch_high", "name": "High alchemy", "handler": "alch_high", "id": 34, "level": 55, "xp": 65, "delay": 5,
+     "runes": [{"id": 554, "amount": 5, "name": "fire rune"}, {"id": 561, "amount": 1, "name": "nature rune"}],
+     "fallback": "alch_low", "trainTo": 55},
+    {"key": "superheat", "name": "Superheat item", "handler": "superheat", "id": 25, "level": 43, "xp": 53, "delay": 5,
+     "runes": [{"id": 554, "amount": 4, "name": "fire rune"}, {"id": 561, "amount": 1, "name": "nature rune"}],
+     "fallback": null, "trainTo": 43}
+  ]
+}

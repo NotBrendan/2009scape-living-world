@@ -1,0 +1,37 @@
+{
+  "setupDate": "2026-10-11",
+  "repositories": [
+    {
+      "path": "singleplayer",
+      "url": "https://gitlab.com/2009scape/singleplayer/windows.git",
+      "revision": "f00fcb7e8f8916ed016cc8eb7a9f0bb19f490b60"
+    },
+    {
+      "path": "upstream-server",
+      "url": "https://gitlab.com/2009scape/2009scape.git",
+      "revision": "bea45a9e93592b567f9b9293b82a36c8773244be"
+    },
+    {
+      "path": "upstream-client",
+      "url": "https://gitlab.com/2009scape/rt4-client.git",
+      "revision": "61b952d2b46132b9a5d696f4e0c4c0df75c7f6d2"
+    },
+    {
+      "path": "upstream-launcher",
+      "url": "https://gitlab.com/2009scape/Saradomin-Launcher.git",
+      "revision": "656c4727cf19d5b611356f96959a9182c6c31b11"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "singleplayer\\game\\server.jar",
+      "sha256": "db550017851c6b0c610f451c8cbcd7777b15e93033e3892f7c477a958d2428eb",
+      "bytes": 42364256
+    },
+    {
+      "path": "singleplayer\\game\\client.jar",
+      "sha256": "e128317d419f8fea353f04cda7ecc291d78ab9e88e9125e369b783d0af1b31d8",
+      "bytes": 8674890
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+# Upstream checkouts, runtimes and local clients (large, rebuilt from sources.json)
+/singleplayer/
+/upstream-server/
+/upstream-client/
+/upstream-launcher/
+/vps-client/
+/vps-client-home/
+/client-home/
+/runtime/
+/patches/classes/
+
+# Logs, backups, archives
+logs/
+backups/
+*.log
+*.tar.gz
+*.tgz
+*.zip
+*.bak
+*.bak-*
+*.before-*.bak
+
+# Secrets: SSH keys, env files, credentials (never commit)
+*.pem
+*.ppk
+*.key
+*.p12
+*.pfx
+*<SSH-KEY>*
+*<SSH-KEY>*
+*<SSH-KEY>*
+known_hosts
+authorized_keys
+.env
+.env.*
+*credential*
+*credentials*
+/deployment/access/
+/deployment/account-tools/
+
+# Live player saves and databases
+*.db
+*.sqlite
+*.sql
+players/
+playersaves/
+
+# Compiled output and build folders
+*.class
+build/
+out/
+__pycache__/
+/deployment/overlay-classes/
+/deployment/client-plugins/build/
+/deployment/performance-tools/
+/deployment/client-releases/
+/deployment/.work-in-progress/
+
+# Your own server notes
+LOCAL-*.md

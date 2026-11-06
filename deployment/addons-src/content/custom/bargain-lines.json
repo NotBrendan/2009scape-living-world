@@ -1,0 +1,20 @@
+{
+  "_about": "Batch 24 Bargain lines. {name} = player, {price} = gp text. Keys: accept, counter, final, lowball, walk, budget, afk; optional per-style keys like accept.GRUFF (styles: CHEERY GRUFF POSH DREAMY SALTY). Keep each line under 48 chars before substitution so it fits one chat line.",
+  "accept": ["Done. {price} gp, trade me, {name}.", "Alright, {price} gp. Hard bargain, {name}.", "Fine, {price} gp. Trade me and offer that.", "Shake on it: {price} gp."],
+  "accept.GRUFF": ["{price}. Trade me. Quick.", "Fine. {price} gp. Don't tell anyone."],
+  "accept.CHEERY": ["Lovely! {price} gp it is, {name}!", "Deal! {price} gp, trade me!"],
+  "accept.POSH": ["Very well. {price} gp, {name}.", "Agreed, {price} gp. A civil sum."],
+  "counter": ["Meet me halfway: {price} gp.", "Can't go that low. {price} gp.", "Tell you what, {price} gp.", "{price} gp and we're square."],
+  "counter.GRUFF": ["No. {price} gp.", "{price}. That's me being kind."],
+  "counter.CHEERY": ["Ooh, close! How about {price} gp?", "Let's say {price} gp, friend!"],
+  "counter.POSH": ["I could stretch to {price} gp.", "Shall we say {price} gp?"],
+  "final": ["{price} gp is my final price, {name}.", "No more haggling. {price} gp, final.", "{price} gp. Take it or leave it."],
+  "final.GRUFF": ["{price}. Final. Done talking."],
+  "lowball": ["Ha! Nice try. {price} gp.", "Been talking to goblins? {price} gp.", "Cheeky. {price} gp, {name}.", "That wouldn't cover my boots. {price}."],
+  "lowball.GRUFF": ["Insulting. {price} gp."],
+  "lowball.POSH": ["Oh, please. {price} gp, {name}."],
+  "walk": ["I'm done here, {name}. Good day.", "Waste of my time. Off I go.", "Come back with a real offer. Bye.", "No deal, {name}. Mind the goblins."],
+  "walk.GRUFF": ["Done. Go away, {name}."],
+  "budget": ["Given enough away today. {price} gp.", "No more discounts today. {price} gp.", "Market's tight today, {price} gp flat."],
+  "afk": ["List price, {price} gp, no haggling.", "{price} gp, straight. That's the price."]
+}
