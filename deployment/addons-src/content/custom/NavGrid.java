@@ -133,6 +133,24 @@ public final class NavGrid implements StartupListener {
      */
     static final java.util.Map<Integer, int[]> BIG_FOUND = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /** P39 R4 (-Dreach.gates, default -Dreach): the multi-tile gate record ::navbuild wrote on the farm (seed p38-live-navbuilt), for a
+     *  nav-p0.bin saved without one (live): {x, y, origin x, origin y}, 48 covered tiles. Used only when the file has no record. */
+    static final boolean REACH_GATES = Boolean.parseBoolean(System.getProperty("reach.gates", String.valueOf(Boolean.getBoolean("reach"))));
+    static final int[][] BIG_STATIC = {
+            {2459, 3383, 2459, 3383}, {2459, 3384, 2459, 3383}, {2460, 3383, 2459, 3383}, {2460, 3384, 2459, 3383}, {2461, 3383, 2459, 3383}, {2461, 3384, 2459, 3383}, {2462, 3383, 2459, 3383}, {2462, 3384, 2459, 3383},
+            {2463, 3383, 2459, 3383}, {2463, 3384, 2459, 3383}, {2464, 3492, 2464, 3492}, {2465, 3492, 2464, 3492}, {2466, 3492, 2466, 3492}, {2467, 3492, 2466, 3492}, {2719, 2766, 2719, 2766}, {2720, 2766, 2719, 2766},
+            {2721, 2766, 2721, 2766}, {2722, 2766, 2721, 2766}, {2827, 3647, 2827, 3647}, {2828, 3647, 2827, 3647}, {3265, 2784, 3265, 2784}, {3265, 2785, 3265, 2784}, {3294, 2778, 3294, 2778}, {3294, 2779, 3294, 2778},
+            {3294, 2780, 3294, 2778}, {3295, 2778, 3294, 2778}, {3295, 2779, 3294, 2778}, {3295, 2780, 3294, 2778}, {3483, 3320, 3483, 3320}, {3483, 3321, 3483, 3320}, {3483, 3322, 3483, 3320}, {3484, 3320, 3483, 3320},
+            {3484, 3321, 3483, 3320}, {3484, 3322, 3483, 3320}, {3485, 3320, 3483, 3320}, {3485, 3321, 3483, 3320}, {3485, 3322, 3483, 3320}, {3486, 3320, 3483, 3320}, {3486, 3321, 3483, 3320}, {3486, 3322, 3483, 3320},
+            {3508, 3446, 3508, 3446}, {3508, 3447, 3508, 3446}, {3509, 3446, 3508, 3446}, {3509, 3447, 3508, 3446}, {3510, 3446, 3508, 3446}, {3510, 3447, 3508, 3446}, {3511, 3446, 3508, 3446}, {3511, 3447, 3508, 3446},
+    };
+    /** P39 R4: BIG_STATIC into BIG_FOUND (each tile's own byte as loaded, so a save writes the grid back unchanged). */
+    static int builtInGates() {
+        BIG_FOUND.clear(); BIG_GATE.clear();
+        for (int[] r : BIG_STATIC) { if (!inBounds(r[0], r[1]) || !inBounds(r[2], r[3])) continue; int k = idx(r[0], r[1]); BIG_FOUND.put(k, new int[]{idx(r[2], r[3]), grid[k] & 0xFF}); }
+        return BIG_FOUND.size();
+    }
+
     static void markFootprint(core.game.node.scenery.Scenery o) {
         if (o == null || o.getDefinition() == null || o.getLocation() == null) return;
         int sx = o.getDefinition().getSizeX(), sy = o.getDefinition().getSizeY();
@@ -382,6 +400,7 @@ public final class NavGrid implements StartupListener {
             try { trailer = readTrailer(d); } catch (Throwable t) { System.out.println("[Nav] multi-tile gates and one-way doors: " + t); } // review fix 4 (batch 21 C, B9): from the file, no region reads
             try { readDoorEdges(); } catch (Throwable t) { System.out.println("[Nav] door edges: " + t); } // pathing review 10-23 N-1
             if (trailer) applyTrailer();
+            else if (REACH_GATES && builtInGates() > 0) { System.out.println("[Nav] nav-p0.bin has no multi-tile gate record: " + BIG_FOUND.size() + " covered tiles from the built-in record (-Dreach.gates)"); applyTrailer(); } // P39 R4
             else System.out.println("[Nav] nav-p0.bin has no multi-tile gate record (saved before review fix 4): those gates stay walls until ::navbuild");
             try { closeOneWay(); } catch (Throwable t) { System.out.println("[Nav] one-way doors: " + t); } // batch 21 B9 (the static list: needs no record)
             return true;

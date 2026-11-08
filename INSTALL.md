@@ -107,6 +107,9 @@ server.
 | `survey.step/stairs/doors/tunnels` | 48/6/6/4 | surveyor lattice and special surveyors |
 | `prices.drift`, `prices.driftDaily` | true, 2 | price drift towards shortages, percent per day |
 | `scenes`, `scenes.greet/crews/show/rescueTalk` | true | scenes near players; `data/scenes.off` is a kill switch without a restart |
+| `reach` | false | reach fixes: Mort Myre needs Nature Spirit, Shilo closed to bots, drawbridge deck, built-in gate record, same-side shops. Parts: `reach.myre/bridge/shilo/gates` follow `reach`; `reach.sea` is separate and off |
+| `bots.casualChat` | false | some replies lower-case or shortened, with a typing delay; price lines unchanged |
+| `bounty.exemptDeals` | false | items bought from bots do not earn the bounty premium |
 | `afk.owners` | (empty) | accounts allowed to use `::afk` (comma-separated). Empty = the command is off |
 | `world.website` | (empty) | a site bots mention when asked for guides or prices. Empty = they say there is none |
 | `quests.share`, `quests.coinCap`, `quests.off` | 0.15, 100000, (none) | share of bots allowed to quest, daily quest coins, scripts to ship switched off |

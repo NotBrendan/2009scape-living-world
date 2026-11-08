@@ -59,6 +59,7 @@ public final class TestB19B implements StartupListener {
                         log("bots: gate " + gate.bot.getUsername() + ", gate2 " + gate2.bot.getUsername() + ", left3 " + left3.bot.getUsername() + ", left6 " + left6.bot.getUsername() + ", unit " + unitBot.getUsername() + " (Watchdog limit " + Watchdog.STUCK_MS / 1000 + " s)");
                         return false;
                     }
+                    if (phase == 0 && t >= 100 && NavPlanner.built && !NavWalker.ON) { log("RESULT SKIP planner off: GATE/GATE2/LEFT/UNIT need NavWalker.ON (built true, ON false)"); log("DONE"); return true; } // P38 L10
                     if (phase == 0 && t == 1200) { log("RESULT planner never came up (built " + NavPlanner.built + ", ON " + NavWalker.ON + ")"); log("DONE"); return true; }
                     if (phase < 1) return false;
                     if (phase == 1 && now - t0 > 3_000) { // the teleports have landed
@@ -158,7 +159,7 @@ public final class TestB19B implements StartupListener {
                 } else if (c.name.startsWith("GATE")) {
                     long atGate = firstT > 0 && c.gateT > 0 ? (firstT - c.gateT) / 1000 : -1;
                     boolean ok = "GATE2".equals(c.name) ? rescues >= 1 && idles == 0 : rescues >= 1 && idles == 0 && "rule-gate".equals(reason) && atGate >= 0 && atGate <= 180; // GATE2 (extra): it wanders the wall, so the anchor resets and the reason is wherever it stalled; rescued, not idle, is the check
-                    log("RESULT " + c.name + ("GATE2".equals(c.name) ? " 0-coin planner-only walk" : " 0-coin shop walk") + " across the Al Kharid gate: rescues " + rescues + ", idle give-ups " + idles + ", teleported " + c.jumped + ", first record " + reason + " (" + rsub + ") " + after + " s after the start, " + atGate + " s after reaching the gate (limit 2 min + 30 s + one 30 s tick) -> " + (ok ? "PASS" : "FAIL"));
+                    log("RESULT " + c.name + ("GATE2".equals(c.name) ? " 0-coin planner-only walk" : " 0-coin shop walk") + " across the Al Kharid gate: rescues " + rescues + ", idle give-ups " + idles + ", teleported " + c.jumped + ", first record " + reason + " (" + rsub + ") " + after + " s after the start, " + atGate + " s after reaching the gate (limit 2 min + 30 s + one 30 s tick) -> info only (pre-batch-21 behaviour; the toll link off is not a live mode; ok=" + ok + ")"); // P38 L10: info, no verdict
                 } else {
                     boolean ok = idles >= 1 && rescues == 0 && !c.jumped && after > 0 && after <= 210;
                     log("RESULT " + c.name + " leftover route beside the job: idle give-ups " + idles + ", rescues " + rescues + ", first " + reason + " (" + rsub + ") " + after + " s after placing (2 min limit + ticks) -> " + (ok ? "PASS" : "FAIL"));

@@ -364,6 +364,7 @@ public final class BotChat implements StartupListener, TickListener {
         if (bot == null) for (Player b : near) if (BOT_COOLDOWN.getOrDefault(b.getUsername().toLowerCase(Locale.ROOT), 0L) <= now) { bot = b; break; }
         if (bot == null) return;
         Persona who = Persona.of(bot);
+        Brain.exactReply = false;
         List<String> lines = Brain.answer(bot, who, speaker, text, addressed);
         if (lines == null || lines.isEmpty()) return;
         String bk = bot.getUsername().toLowerCase(Locale.ROOT);
@@ -371,10 +372,75 @@ public final class BotChat implements StartupListener, TickListener {
         LAST_ANSWER.put(bk, lines.get(0));
         BOT_COOLDOWN.put(bk, now + 5_000 + RNG.nextInt(4_000));
         PLAYER_COOLDOWN.put(sk, now + 2_500);
-        speak(bot, speaker, lines, 1 + RNG.nextInt(2));
+        int wait = 1 + RNG.nextInt(2);
+        if (CASUAL) { // P38 L11: casual lines, and no answer sooner than 2 s (off: the lines and timing above, unchanged)
+            // P38 L11 review: trade and crew answers stay word for word; a short form ("lol") only replaces a one-line reply to a non-question
+            boolean shortOk = lines.size() == 1 && text.indexOf('?') < 0;
+            List<String> cl = new ArrayList<>();
+            for (String l : lines) cl.add(Brain.exactReply ? l : casual(l, who.style, true, shortOk, RNG));
+            wait = replyTicks(true, cl.get(0).length(), RNG);
+            // P38 L11 review: a bot still "typing" an earlier reply answers after it, never before, and is not picked again meanwhile
+            long busy = TYPING.getOrDefault(bk, 0L);
+            if (busy > now) wait = Math.max(wait, (int) ((busy - now + 599) / 600) + 1);
+            TYPING.put(bk, now + wait * 600L + 1_200L * cl.size());
+            BOT_COOLDOWN.put(bk, now + wait * 600L + 5_000 + RNG.nextInt(4_000));
+            System.out.println("[Casual] reply bot=" + bot.getUsername() + " shape=" + shape(lines.get(0), cl.get(0)) + " delayMs=" + wait * 600);
+            lines = cl;
+        }
+        speak(bot, speaker, lines, wait);
         Trust.chatted(speaker, bot);
         if (DEBUG) System.out.println("[BotChat] " + speaker.getUsername() + ": \"" + text + "\" -> " + bot.getUsername() + ": " + lines);
-        try { chimeIn(bot, speaker, lower, near, 4 + 2 * lines.size()); } catch (Throwable ignored) { }
+        try { chimeIn(bot, speaker, lower, near, 4 + 2 * lines.size() + (CASUAL ? wait : 0)); } catch (Throwable ignored) { }
+    }
+
+    // ------------------------------------------------------------ P38 L11: casual chat and typing delay (human-look study section 4 item 2)
+
+    /** -Dbots.casualChat=true: replies to players and the town-guide greeting read casual and wait like typing. Default off = no change. */
+    static final boolean CASUAL = Boolean.getBoolean("bots.casualChat");
+    static final Map<String, Long> TYPING = new HashMap<>(); // bot -> when its last casual reply finishes (flag on only)
+    static final String[] SHORT_FORMS = {"lol", "gl", "aye", "yeah", "np", "ty", "nice one", "hm"};
+
+    /** Lines that carry a number or a price are never reworded (Deals and Haggle prices, quantities, levels). */
+    static boolean exact(String s) {
+        for (int i = 0; i < s.length(); i++) if (Character.isDigit(s.charAt(i))) return true;
+        String l = s.toLowerCase(Locale.ROOT);
+        return l.contains(" gp") || l.contains("coins") || l.contains("price");
+    }
+
+    /** Pure: 20% a short form (short lines only), 60% lowercase without the final full stop (posh voices 20%), the rest as written. */
+    static String casual(String line, Persona.Style style, boolean on, Random r) { return casual(line, style, on, true, r); }
+
+    static String casual(String line, Persona.Style style, boolean on, boolean shortOk, Random r) {
+        if (!on || line == null || line.isEmpty() || exact(line)) return line;
+        double roll = r.nextDouble();
+        if (roll < 0.20 && shortOk && line.length() <= 24 && line.indexOf('?') < 0) return SHORT_FORMS[r.nextInt(SHORT_FORMS.length)];
+        double top = style == Persona.Style.POSH ? 0.40 : 0.80;
+        if (roll >= 0.20 && roll < top) { String o = line.toLowerCase(Locale.ROOT); return o.endsWith(".") && !o.endsWith("..") ? o.substring(0, o.length() - 1) : o; }
+        return line;
+    }
+
+    /** Line shape for the soak counts: plain (as written), lower (lowercased, final full stop dropped) or short (a short form). */
+    static String shape(String before, String after) {
+        if (before.equals(after)) return "plain";
+        String b = before.toLowerCase(Locale.ROOT);
+        if (b.endsWith(".") && !b.endsWith("..")) b = b.substring(0, b.length() - 1);
+        return b.equals(after) ? "lower" : "short";
+    }
+
+    /** Pure: ticks before the first line goes out. Off: 1-2 (as before). On: 2-5 s plus 40 ms per character, at least 4 ticks (2.4 s). */
+    static int replyTicks(boolean on, int firstLineChars, Random r) {
+        if (!on) return 1 + r.nextInt(2);
+        int ms = 2000 + r.nextInt(3001) + 40 * Math.min(firstLineChars, LINE);
+        return Math.max(4, (ms + 599) / 600);
+    }
+
+    /** The town guide's greeting: casual and typed (flag on), or said at once (flag off). */
+    static void greetSay(Player bot, String text) {
+        if (!CASUAL) { say(bot, text); return; }
+        String out = casual(text, Persona.of(bot).style, true, RNG);
+        int ticks = replyTicks(true, out.length(), RNG);
+        System.out.println("[Casual] greet bot=" + bot.getUsername() + " shape=" + shape(text, out) + " delayMs=" + ticks * 600);
+        GameWorld.getPulser().submit(new Pulse(ticks) { @Override public boolean pulse() { say(bot, out); return true; } });
     }
 
     /** Says the lines a tick or two apart, facing the player, like someone typing. */
@@ -771,6 +837,8 @@ public final class BotChat implements StartupListener, TickListener {
     // ------------------------------------------------------------ understanding
 
     static final class Brain {
+        /** P38 L11 review: set when the last answer came from Companions or TradeTalk, so casual chat leaves it word for word. Game thread only. */
+        static boolean exactReply;
         static final Pattern WHERE = Pattern.compile("(?:where(?:'s|s| is| are| can i (?:find|get|buy)| do i (?:find|get|buy)| to (?:find|get|buy))|how do i get to|directions to|nearest|closest)\\s+(?:the |a |an |some )?([a-z' ]+?)[?.!]*$");
         static final Pattern PRICE = Pattern.compile("(?:price of|price for|how much (?:is|are|for|do|does)|what(?:'s|s| is| are| do| does)|cost of|value of|worth of)\\s+(?:the |a |an |some )?([a-z' 0-9]+?)(?: worth| cost| sell for| go for| selling for| fetch| price)?[?.!]*$");
         static final Pattern PRICE2 = Pattern.compile("^([a-z' 0-9]+?)\\s+(?:price|cost|worth)[?.!]*$");
@@ -798,10 +866,10 @@ public final class BotChat implements StartupListener, TickListener {
             }
             // --- a player's crew, an errand, a quest partner (Companions, the owner 2026-10-21)
             List<String> co = Companions.chat(bot, speaker, t, addressed);
-            if (co != null) return co;
+            if (co != null) { exactReply = true; return co; }
             // --- buying, selling and haggling with this bot (2026-10-21)
             List<String> tr = TradeTalk.trade(bot, who, speaker, t, text, addressed);
-            if (tr != null) return tr;
+            if (tr != null) { exactReply = true; return tr; }
             // --- prices
             m = PRICE.matcher(t);
             Matcher m2 = PRICE2.matcher(t);

@@ -44,7 +44,7 @@ public final class TestB21B implements StartupListener {
                     t++;
                     long now = System.currentTimeMillis();
                     if (phase == 0 && t == 1200) { log("RESULT planner never came up"); log("DONE"); return true; }
-                    if (phase == 0 && t >= 100 && NavPlanner.built) { phase = 1; unit(); spawn(); t0 = now; return false; }
+                    if (phase == 0 && t >= 100 && NavPlanner.built) { phase = 1; unit(); if (!NavWalker.ON) { log("RESULT WALK skipped: planner off (NavWalker-only walks)"); log("RESULT summary: " + (fails == 0 ? "PASS" : "FAIL (" + fails + ")") + " (checks only, planner off)"); log("DONE"); return true; } spawn(); t0 = now; return false; } // P38 L10
                     if (phase == 1 && now - t0 > 3_000) { phase = 2; t0 = now; log("walks start"); }
                     if (phase != 2) return false;
                     boolean all = true;

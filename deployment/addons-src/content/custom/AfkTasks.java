@@ -1339,6 +1339,14 @@ public final class AfkTasks implements StartupListener {
          *  on only with -Dafk.bridgeFix=true, and data/afk.bridgefix.off forces it off even then. Read once at class load.
          *  Bots and players share this path, so turning it on changes bot walking too. Off = the old behaviour exactly. */
         static final boolean BRIDGE_FIX = bridgeFixOn();
+        /** P39 reachability: master -Dreach=true (default off); -Dreach.<fix> overrides one fix (defaults to the master). Off = train-4 exactly.
+         *  myre (Gates: Mort Myre box), bridge (bridgeVia: the Lumbridge deck), shilo (Gates: Shilo closed to bots), gates (NavGrid: the
+         *  built-in multi-tile gate record), sea (SmartAdventurers: a same-side shop before one across the sea; own switch, not the master). Gates and NavGrid read the same properties. */
+        static final boolean REACH = Boolean.getBoolean("reach");
+        static boolean reach(String sub) { return Boolean.parseBoolean(System.getProperty("reach." + sub, String.valueOf(REACH))); }
+        static final boolean REACH_MYRE = reach("myre"), REACH_BRIDGE = reach("bridge"), REACH_SHILO = reach("shilo"), REACH_GATES = reach("gates");
+        /** P39 R7: its own switch (-Dreach.sea=true), NOT the master: changes which shops bots visit, turned on separately. */
+        static final boolean REACH_SEA = Boolean.getBoolean("reach.sea");
         static boolean bridgeFixOn() {
             try { return "true".equalsIgnoreCase(System.getProperty("afk.bridgeFix", "false")) && !new java.io.File(core.ServerConstants.DATA_PATH, "afk.bridgefix.off").exists(); } catch (Throwable t) { return false; }
         }
@@ -3558,6 +3566,7 @@ public final class AfkTasks implements StartupListener {
 
         void walk(State next) {
             if (boat != null && boatTick()) return; // batch 16 item6
+            if (REACH_MYRE && Gates.swampGatePass(p)) { last = "through the Mort Myre gate"; return; } // P39 R1: the warning the gate opened for a bot that has started Nature Spirit
             double dist = p.getLocation().getDistance(dest);
             if (dist <= 2 && underDest != null) { // at the ladder or trapdoor: climb down like a player, then on to the spot
                 Location[] ent = entrance(underDest);
@@ -3825,6 +3834,7 @@ public final class AfkTasks implements StartupListener {
                 // between the wall and the river (x 3232-3240) runs straight down to it. The two Lumbridge rules sent such a bot
                 // north round the castle, its next hop south-west landed in the courtyard box, that box sent it back out east, and
                 // so on for ever (148 "never reached Bob's" in 3 days).
+                if (REACH_BRIDGE && b[0] == 3238 && from.getY() >= 3225 && to.getY() <= 3232) continue; // P39 R3 (west/south-west goals only: north-bound walks keep the round-the-north via, farm pair 11-07): on the bridge deck (y 3225-3226) or the lane's north end: no via (it sent westbound walks back to the east bank: the 3245,3239 <-> 3242,3226 loop); y 3208-3224 keep the rule
                 if ((b[0] == 3238 || (b[0] == 3200 && from.getX() >= 3232)) && to.getY() < 3205 && to.getX() >= 3220) continue; // only toward Bob's: a south-west goal (the Wizards' Tower) still goes round (batch 12 soak: 2 quest walks timed out in the courtyard without this)
                 if (b[0] == 3238 && !(to.getX() < 3238 || to.getY() > 3232)) continue; // the drawbridge rule: anything west or north goes round the north side first (south-west too: the straight line cuts through the castle)
                 // P32 (TestB16H leg A, BRIDGE_FIX only): the row-3 via 3245,3240 is on the EAST bank north of the bridge, and the box takes

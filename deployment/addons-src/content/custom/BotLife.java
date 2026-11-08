@@ -362,7 +362,7 @@ public final class BotLife implements StartupListener {
             if (p != null && !greeted.contains(p.getUsername())) {
                 greeted.add(p.getUsername());
                 if (greeted.size() > 20) greeted.remove(0);
-                say(pick(new String[]{"Hello there, " + p.getUsername() + "! Welcome to " + town.name + ".",
+                BotChat.greetSay(bot, pick(new String[]{"Hello there, " + p.getUsername() + "! Welcome to " + town.name + ".",
                         "Ah, " + p.getUsername() + "! Back in " + town.name + " again?",
                         "Afternoon, " + p.getUsername() + ". Need directions?"}));
                 nextChat = now + 8_000;

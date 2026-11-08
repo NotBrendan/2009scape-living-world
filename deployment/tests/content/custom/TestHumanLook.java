@@ -70,6 +70,33 @@ public final class TestHumanLook implements StartupListener {
     static boolean aa999(String n) { return n != null && n.matches("[A-Z][a-z]+\\d{3}"); }
     static String pct(int a, int b) { return b == 0 ? "-" : String.format(Locale.ROOT, "%d/%d (%.0f%%)", a, b, 100.0 * a / b); }
 
+    /** U5 (P38 L11 casual chat): flag off = no casual lines and the old 1-2 tick wait; flag on = casual shapes appear, every wait >= 2 s;
+     *  a Deals price line is never changed, on or off. Pure helpers, so no bot or flag state is needed. */
+    static void casualUnit() {
+        Random r = new Random(38);
+        String[] plain = {"Hello there, Bob. Welcome to Lumbridge.", "Aye. Hello.", "Hi Bob! How's the adventuring?", "The bank is just north of here."};
+        String deal = "Selling 40 oak logs at 112 each, under guide. Trade me.";
+        String hag = "Fine. 1,250 gp or nothing.";
+        int offChanged = 0, onChanged = 0, shortN = 0, lowerN = 0, dealChanged = 0, minOn = 99, offMin = 99, offMax = 0, n = 2000;
+        for (int i = 0; i < n; i++) {
+            String line = plain[i % plain.length];
+            for (BotChat.Persona.Style st : BotChat.Persona.Style.values()) {
+                if (!line.equals(BotChat.casual(line, st, false, r))) offChanged++;
+                String o = BotChat.casual(line, st, true, r);
+                if (!line.equals(o)) { onChanged++; String sh = BotChat.shape(line, o); if (sh.equals("short")) shortN++; else if (sh.equals("lower")) lowerN++; }
+                if (!deal.equals(BotChat.casual(deal, st, true, r)) || !deal.equals(BotChat.casual(deal, st, false, r))
+                        || !hag.equals(BotChat.casual(hag, st, true, r))) dealChanged++;
+            }
+            int off = BotChat.replyTicks(false, line.length(), r); offMin = Math.min(offMin, off); offMax = Math.max(offMax, off);
+            minOn = Math.min(minOn, BotChat.replyTicks(true, i % 3 == 0 ? 0 : line.length() * 3, r));
+        }
+        int total = n * BotChat.Persona.Style.values().length;
+        result("U5", true, offChanged == 0 && offMin >= 1 && offMax <= 2 && onChanged * 100 >= total * 40 && shortN > 0 && lowerN > 0
+                && minOn * 600 >= 2000 && dealChanged == 0 && !BotChat.CASUAL == !Boolean.getBoolean("bots.casualChat"),
+                "flag off changed " + offChanged + ", wait " + offMin + "-" + offMax + " ticks; flag on changed " + pct(onChanged, total) + " (lower " + lowerN
+                        + ", short " + shortN + "), shortest wait " + minOn * 600 + " ms; Deals/Haggle price lines changed " + dealChanged);
+    }
+
     // ------------------------------------------------------------------ unit checks
     static void units() {
         boolean on = SmartAdventurers.HUMAN_NAMES;
@@ -89,6 +116,7 @@ public final class TestHumanLook implements StartupListener {
         // U2: a taken bare name gets digits and is not the taken one
         String t2 = SmartAdventurers.pickHumanName("Kabal", x -> x.equals("kabal"), new Random(5));
         result("U2", on, t2 != null && !t2.equalsIgnoreCase("Kabal") && endsInDigit(t2) && t2.length() <= 12, "Kabal taken -> " + t2);
+        casualUnit(); // U5 (P38 L11), judged whatever the flags are: the pure helpers take the flag as an argument
         // U3/U4: a "direct" profile is restored under exactly its name and saved with "direct":true
         if (!on) { log("INFO U3/U4: skipped (bots.humanNames=false)"); return; }
         SmartAdventurers.Profile p = new SmartAdventurers.Profile();

@@ -28,7 +28,7 @@ public final class TestB17D2 implements StartupListener {
                 if (t < 300 || t % 50 != 0) return false;
                 try {
                     List<Object[]> board = Bounty.board();
-                    if (board.isEmpty()) { if (t > 2500) { log("RESULT board still empty"); log("DONE"); return true; } log("board empty at tick " + t); return false; }
+                    if (board.isEmpty()) { if (t > 2500) { log("RESULT SKIP board still empty at tick 2500 (no item to test)"); log("DONE"); return true; } log("board empty at tick " + t); return false; }
                     int id = (int) board.get(0)[0]; String nm = String.valueOf(board.get(0)[1]);
                     Player a = TestA1.human(Location.create(3165, 3485, 0), 917001), b = TestA1.human(Location.create(3166, 3485, 0), 917002);
                     long ts = System.currentTimeMillis() - 3_600_000L;
@@ -40,7 +40,7 @@ public final class TestB17D2 implements StartupListener {
                     });
                     log("item " + nm + " (" + id + ") guide " + MarketBrain.value(id) + ", 25% on 10 = " + (long) MarketBrain.value(id) * 10 * 25 / 100 + "; A uid " + a.getDetails().getUid() + " bought 10 an hour ago, B uid " + b.getDetails().getUid() + " bought none");
                     long pa = sale(a, id, 10), pb = sale(b, id, 10), pa2 = sale(a, id, 10);
-                    log("RESULT A (bought 10, sells 10): premium " + pa + " gp; B (bought none, sells 10): premium " + pb + " gp; A again (10 more): premium " + pa2 + " gp");
+                    log("RESULT A (bought 10, sells 10): premium " + pa + " gp; B (bought none, sells 10): premium " + pb + " gp; A again (10 more): premium " + pa2 + " gp -> " + (pa == 0 && pb > 0 && pa2 > 0 ? "PASS" : "FAIL"));
                 } catch (Throwable ex) { log("error " + ex); ex.printStackTrace(System.out); }
                 log("DONE"); return true;
             }

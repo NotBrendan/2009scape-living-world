@@ -103,17 +103,48 @@ public final class Bounty implements StartupListener {
      */
     static final long EXEMPT_WINDOW = 48L * 3_600_000;
     static final Map<String, java.util.Deque<long[]>> EXEMPTED = new java.util.concurrent.ConcurrentHashMap<>(); // "uid:item" -> {when, units}
-    static int exempt(Player player, int id, int qty) {
+    /**
+     * P38 L8 (audit X-6, Deals/traders part), flag -Dbounty.exemptDeals (default off = nothing recorded, exempt() as before):
+     * units a player bought from a bot at the bank (Deals) or from a travelling trader, kept like EXEMPTED ("uid:item" ->
+     * {when, units}, in memory, 48 h). exempt() adds them to the GE buys, so the premium skips them too. Volatile, not final,
+     * so TestP38Bounty can switch it within one run.
+     */
+    static volatile boolean exemptDeals = Boolean.getBoolean("bounty.exemptDeals");
+    static volatile boolean failGeForTest; // TestP38Bounty case E only: the GE lookup throws
+    static final Map<String, java.util.Deque<long[]>> BOT_BUYS = new java.util.concurrent.ConcurrentHashMap<>();
+    public static void boughtFromBots(Player player, int id, int n) {
+        if (!exemptDeals || player == null || n <= 0 || player.isArtificial()) return;
+        try {
+            java.util.Deque<long[]> d = BOT_BUYS.computeIfAbsent(player.getDetails().getUid() + ":" + id, k -> new java.util.ArrayDeque<>());
+            synchronized (d) { d.addLast(new long[]{System.currentTimeMillis(), n}); }
+        } catch (Throwable ignored) { }
+    }
+    static long botBought(int uid, int id, long since) {
+        java.util.Deque<long[]> d = BOT_BUYS.get(uid + ":" + id);
+        if (d == null) return 0;
+        synchronized (d) {
+            while (!d.isEmpty() && d.peekFirst()[0] < since) d.pollFirst();
+            long s = 0; for (long[] u : d) s += u[1];
+            return s;
+        }
+    }
+    static int exempt(Player player, int id, int qty) { return exempt(player, id, qty, null); }
+    /** fromBots (may be null): set to the units bought from bots in the window, for the log line. */
+    static int exempt(Player player, int id, int qty, long[] fromBots) {
         try {
             int uid = player.getDetails().getUid(); long since = System.currentTimeMillis() - EXEMPT_WINDOW;
             long[] bought = {0};
-            core.game.ge.GEDB.run(conn -> {
-                try (java.sql.PreparedStatement st = conn.prepareStatement("SELECT SUM(amount_complete) FROM player_offers WHERE player_uid = ? AND item_id = ? AND is_sale = 0 AND amount_complete > 0 AND time_stamp > ?")) {
-                    st.setInt(1, uid); st.setInt(2, id); st.setLong(3, since);
-                    java.sql.ResultSet rs = st.executeQuery(); if (rs.next()) bought[0] = rs.getLong(1);
-                } catch (Throwable t) { System.out.println("[Bounty] player purchases: " + t); }
-                return Unit.INSTANCE;
-            });
+            try {
+                if (failGeForTest) throw new IllegalStateException("test: GE lookup fails");
+                core.game.ge.GEDB.run(conn -> {
+                    try (java.sql.PreparedStatement st = conn.prepareStatement("SELECT SUM(amount_complete) FROM player_offers WHERE player_uid = ? AND item_id = ? AND is_sale = 0 AND amount_complete > 0 AND time_stamp > ?")) {
+                        st.setInt(1, uid); st.setInt(2, id); st.setLong(3, since);
+                        java.sql.ResultSet rs = st.executeQuery(); if (rs.next()) bought[0] = rs.getLong(1);
+                    } catch (Throwable t) { System.out.println("[Bounty] player purchases: " + t); }
+                    return Unit.INSTANCE;
+                });
+            } catch (Throwable t) { bought[0] = 0; } // GE part fails: 0 for it (as before); the bot-buys part below still counts
+            if (exemptDeals) { long b = botBought(uid, id, since); if (fromBots != null) fromBots[0] = b; bought[0] += b; }
             if (bought[0] <= 0) return 0;
             java.util.Deque<long[]> used = EXEMPTED.computeIfAbsent(uid + ":" + id, k -> new java.util.ArrayDeque<>());
             synchronized (used) {
@@ -150,8 +181,10 @@ public final class Bounty implements StartupListener {
      */
     public static void playerSold(Player player, int id, int qty) {
         if (player == null || qty <= 0 || !wanted(id)) return;
-        int bought = exempt(player, id, qty); // batch 17 item2 (audit X-6): no premium on what this player bought on the Exchange in the last 48 h
-        if (bought > 0) System.out.println("[Bounty] " + player.getUsername() + " sold " + qty + " x " + MarketBrain.name(id) + "; " + bought + " of them bought on the Exchange in the last 48 h, no premium on those");
+        long[] fromBots = {0};
+        int bought = exempt(player, id, qty, fromBots); // batch 17 item2 (audit X-6): no premium on what this player bought on the Exchange in the last 48 h
+        if (bought > 0) System.out.println("[Bounty] " + player.getUsername() + " sold " + qty + " x " + MarketBrain.name(id) + "; " + bought + " of them bought on the Exchange in the last 48 h, no premium on those"
+                + (fromBots[0] > 0 ? " (" + Math.min(bought, fromBots[0]) + " bought from bots)" : "")); // P38 L8: only with -Dbounty.exemptDeals
         if (bought >= qty) return;
         long premium = (long) MarketBrain.value(id) * (qty - bought) * PREMIUM_PERCENT / 100;
         String today = Ledger.utcDay(); if (!today.equals(paidDay)) { paidDay = today; paidToday = 0; } // audit 10-23 batch14 item3

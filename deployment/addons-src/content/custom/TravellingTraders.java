@@ -701,6 +701,7 @@ public final class TravellingTraders implements StartupListener {
                         try { int q = 0; for (int v : haul.values()) q += v; BargainHooks.dealt(target, bot, haul.size() == 1 ? name(haul.keySet().iterator().next()) : "haul", q, price); } catch (Throwable ignored) { } // batch 24b item 2
                     }
                     bs = null;
+                    if (Bounty.exemptDeals) try { for (Map.Entry<Integer, Integer> h : haul.entrySet()) Bounty.boughtFromBots(target, h.getKey(), h.getValue()); } catch (Throwable ignored) { } // P38 L8 (audit X-6): no bounty premium on the haul
                     haul.clear();
                     clearCoins(); // its takings go in the bank (they used to be deleted)
                     bankTools();

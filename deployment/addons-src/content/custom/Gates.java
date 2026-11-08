@@ -43,6 +43,9 @@ import java.util.regex.Pattern;
  */
 public final class Gates implements StartupListener {
     static final boolean ON = !"false".equalsIgnoreCase(System.getProperty("gates", "true"));
+    /** P39: the same switches as AfkTasks.Runner.reach (read here so the gate table does not load the Runner). */
+    static boolean reach(String sub) { return Boolean.parseBoolean(System.getProperty("reach." + sub, String.valueOf(Boolean.getBoolean("reach")))); }
+    static final boolean REACH_MYRE = reach("myre"), REACH_SHILO = reach("shilo");
 
     // ------------------------------------------------------------ rules
 
@@ -64,6 +67,44 @@ public final class Gates implements StartupListener {
                 try { return p.getQuestRepository().isComplete(fq); } catch (Throwable t) { return false; }
             }
             String need() { return label; }
+        };
+    }
+
+    /** P39 R1: the engine's own test at the Mort Myre gate (MorytaniaListeners: "open" from the north needs Nature Spirit STARTED). */
+    static Rule started(String enumName, String label) {
+        content.data.Quests q = null;
+        try { q = content.data.Quests.valueOf(enumName); } catch (Throwable ignored) { }
+        final content.data.Quests fq = q;
+        return new Rule() {
+            boolean ok(Player p) {
+                if (fq == null) return !p.isArtificial();
+                try { return p.getQuestRepository().hasStarted(fq); } catch (Throwable t) { return false; }
+            }
+            String need() { return label + " (started)"; }
+        };
+    }
+
+    /** P39 R1: a bot that started Nature Spirit opened the gate from the north: the engine showed the warning (interface 580) and
+     *  waits for button 17; do what that button does (DoorActionHandler.handleAutowalkDoor on the gate it stored), as a player would. */
+    static boolean swampGatePass(Player p) {
+        if (!REACH_MYRE || p == null || !p.isArtificial()) return false;
+        try {
+            core.game.component.Component c = p.getInterfaceManager().getOpened();
+            if (c == null || c.getId() != 580) return false;
+            Object g = p.getAttribute("swampgate", null);
+            p.getInterfaceManager().close();
+            if (!(g instanceof core.game.node.scenery.Scenery)) return false;
+            p.removeAttribute("swampgate");
+            core.game.global.action.DoorActionHandler.handleAutowalkDoor(p, (core.game.node.scenery.Scenery) g);
+            return true;
+        } catch (Throwable t) { return false; }
+    }
+
+    /** P39 R2: closed to bots (players pass this part; combine it with the old rule for them). */
+    static Rule never(String why) {
+        return new Rule() {
+            boolean ok(Player p) { return !p.isArtificial(); }
+            String need() { return why; }
         };
     }
 
@@ -168,7 +209,13 @@ public final class Gates implements StartupListener {
     static {
         g("morytania", "Morytania (east of the Salve)", "quest", 3400, 3150, 3910, 3600, quest("PRIEST_IN_PERIL", "Priest in Peril")); // from the river: the Mort Myre snails at 3409-3423 were outside the box (audit 10-22 09:50)
         g("west-ardougne", "West Ardougne", "quest", 2440, 3265, 2556, 3336, quest("PLAGUE_CITY", "Plague City"));
-        g("shilo", "Shilo Village", "quest", 2817, 2944, 2880, 3005, quest("SHILO_VILLAGE", "Shilo Village"));
+        // P39 R1 (-Dreach.myre): the Mort Myre swamp south of the fence. The gate's open listener (MorytaniaListeners) lets in only those who have
+        // STARTED Nature Spirit (then the warning, which swampGatePass answers for a bot): the same test here, so a bot without it gets no hunt or
+        // trip inside, and one with it walks through the gate. y1 3455 and the two notches keep out the fence-line tiles and the land south of
+        // Canifis that are walked to from the north (flood fill on the live grid, gate tiles shut).
+        if (REACH_MYRE) g("mort-myre", "the Mort Myre swamp", "quest", 3400, 3320, 3520, 3455, started("NATURE_SPIRIT", "Nature Spirit")).notch(3490, 3430, 3520, 3451).notch(3480, 3452, 3520, 3455);
+        // P39 R2 (-Dreach.shilo): no walk out of Shilo Village on the grid, so a bot (rescued to its bank) was stranded; closed to bots, players as before.
+        g("shilo", "Shilo Village", "quest", 2817, 2944, 2880, 3005, REACH_SHILO ? all(never("not for bots (no walk out of Shilo Village)"), quest("SHILO_VILLAGE", "Shilo Village")) : quest("SHILO_VILLAGE", "Shilo Village"));
         g("kharazi", "the Kharazi Jungle", "quest", 2760, 2880, 2960, 2940, quest("LEGENDS_QUEST", "Legends' Quest"));
         g("tirannwn", "Tirannwn (Isafdar and Lletya)", "quest", 2150, 3090, 2380, 3340, quest("REGICIDE", "Regicide"));
         g("ape-atoll", "Ape Atoll", "quest", 2690, 2690, 2820, 2810, quest("MONKEY_MADNESS", "Monkey Madness"));

@@ -123,11 +123,6 @@ Every step with the exact commands and every flag is in [INSTALL.md](INSTALL.md)
 * [deployment/tests/README.md](deployment/tests/README.md): the test harness (throwaway worlds on
   `127.0.0.1`, never a live server).
 
-## Not included
-
-* The companion website (prices, map, hiscores) and the price API behind it. Client plugins that
-  used it read the URL from `-Dlivingworld.pricesUrl` and fail quietly without one.
-
 ## Credits and license
 
 * [2009scape](https://gitlab.com/2009scape) for the server, the client and the plugin system.

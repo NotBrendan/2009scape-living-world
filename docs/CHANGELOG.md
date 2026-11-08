@@ -6,6 +6,18 @@ live time). Bug numbers refer to a register that is not published; the behaviour
 
 ## November 2026
 
+* **Reach fixes** (`-Dreach`, default off): bots stop walking into places they cannot leave. The
+  Mort Myre swamp is gated on Nature Spirit being started, Shilo Village is closed to bots, the
+  Ardougne drawbridge deck no longer traps north-bound walks, the planner gets a built-in record of
+  multi-tile gates when its grid file has none, and shop trips pick the nearest shop on the same
+  side of the sea. Each part has its own switch (`reach.myre`, `reach.bridge`, `reach.shilo`,
+  `reach.gates`); `reach.sea` stays off unless set on its own.
+* **Casual chat** (`-Dbots.casualChat`, default off): replies to players are sometimes lower-case or
+  shortened and arrive after a typing delay. Lines with prices or numbers are never changed.
+* **No bounty premium on bot-bought items** (`-Dbounty.exemptDeals`, default off): units a player
+  buys from a bot at the bank or from a travelling trader do not count towards the bounty premium,
+  so buying cheap from a bot and reselling to the board earns nothing extra.
+* **New trial tests**: Shield of Arrav partner checks and the bounty exemption.
 * **Scenes near players** (`Scenes`): a wave and a line for a newcomer near Lumbridge, crews hunt
   near home, one show per hub per 30 minutes, a comment when a stuck bot gets rescued. All behind
   `-Dscenes.*` flags and a `data/scenes.off` kill switch.

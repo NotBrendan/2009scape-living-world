@@ -399,6 +399,7 @@ public final class Deals implements StartupListener {
                 o.qty = left; humanBuys++;
                 try { Failures.econNote(o.seller, Failures.PLAYER_TRADE); } catch (Throwable ignored) { } // batch 19c §4.1: paid through the trade window, not the Wallet
                 if (o.humanBuyer != null) { BotChat.Trust.add(o.humanBuyer, o.seller, 1); o.hag.remove(o.humanBuyer.getUsername().toLowerCase(Locale.ROOT)); }
+                if (Bounty.exemptDeals) try { Bounty.boughtFromBots(o.humanBuyer, o.id, sold); } catch (Throwable ignored) { } // P38 L8 (audit X-6): no bounty premium on these
                 System.out.println("[Deals] " + o.seller.getUsername() + " sold " + sold + " x " + name(o.id) + " to player " + (o.humanBuyer != null ? o.humanBuyer.getUsername() : "?") + " for " + paid + " gp, " + left + " left");
                 BotChat.say(o.seller, BotChat.pick("Pleasure. " + left + " left, " + o.unit + " each.", "Cheers! Still " + left + " going at " + o.unit + ".", "Sold. " + left + " more if anyone wants them."));
                 o.holdUntil = 0;
@@ -410,6 +411,7 @@ public final class Deals implements StartupListener {
                 try { Failures.econNote(o.seller, Failures.PLAYER_TRADE); } catch (Throwable ignored) { } // batch 19c §4.1
                 if (o.errand) { SmartAdventurers.Brain sb = SmartAdventurers.BRAINS.get(o.seller.getUsername().toLowerCase(Locale.ROOT)); if (sb != null) sb.idleUntil = 0; } // collected: back to work
                 BotChat.clearActivity(o.seller);
+                if (Bounty.exemptDeals) try { Bounty.boughtFromBots(o.humanBuyer, o.id, o.qty); } catch (Throwable ignored) { } // P38 L8 (audit X-6): no bounty premium on these
                 if (o.humanBuyer != null) { BotChat.Trust.add(o.humanBuyer, o.seller, 1); BotChat.news(String.format("%s beat the bots to %s's %s at the bank. Quick hands.", o.humanBuyer.getUsername(), o.seller.getUsername(), name(o.id))); }
                 System.out.println("[Deals] " + o.seller.getUsername() + " sold " + o.qty + " x " + name(o.id) + " to player " + (o.humanBuyer != null ? o.humanBuyer.getUsername() : "?") + " for " + (o.lastDue > 0 ? o.lastDue : o.total()) + " gp");
                 return true;

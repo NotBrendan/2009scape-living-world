@@ -3395,6 +3395,7 @@ public final class SmartAdventurers implements StartupListener, core.api.Shutdow
             }
             if (!needTool && !needFood && !needSupply) return false;
             Object[] best = null; double bestD = 600; List<int[]> buy = null;
+            Object[] sameBest = null; double sameD = 600; List<int[]> sameBuy = null; // P39 R7 (-Dreach.sea): the nearest shop on this side of the sea
             for (Object[] shop : BotChat.WorldData.shops) {
                 int[] stockArr = (int[]) shop[3];
                 Set<Integer> stock = new HashSet<>(); for (int id : stockArr) stock.add(id);
@@ -3412,7 +3413,9 @@ public final class SmartAdventurers implements StartupListener, core.api.Shutdow
                 if (!Preflight.ok(p, Location.create((Integer) shop[1], (Integer) shop[2], 0))) continue; // batch 20 A1
                 double d = Location.create((Integer) shop[1], (Integer) shop[2], 0).getDistance(p.getLocation());
                 if (d < bestD) { bestD = d; best = shop; buy = here; }
+                if (AfkTasks.Runner.REACH_SEA && d < sameD && !AfkTasks.Runner.acrossSea(p.getLocation(), Location.create((Integer) shop[1], (Integer) shop[2], 0))) { sameD = d; sameBest = shop; sameBuy = here; }
             }
+            if (AfkTasks.Runner.REACH_SEA && sameBest != null && best != sameBest) { best = sameBest; buy = sameBuy; bestD = sameD; } // P39 R7: no 180 gp teleport across the sea when a shop this side has it; none this side: the old pick
             if (best == null) return false; // nobody nearby sells it: the old way (stock or a nominal shop)
             long cost = 0; for (int[] b : buy) cost += (long) Math.max(1, MarketBrain.value(b[0])) * b[1];
             if (Ledger.Wallet.coins(p) < cost) return false;

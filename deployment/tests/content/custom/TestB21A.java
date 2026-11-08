@@ -53,7 +53,7 @@ public final class TestB21A implements StartupListener {
                     t++;
                     long now = System.currentTimeMillis();
                     if (phase == 0 && t == 1200) { log("RESULT planner never came up"); log("DONE"); return true; }
-                    if (phase == 0 && t >= 100 && NavPlanner.built) { phase = 1; unit(); spawn(); t0 = now; return false; }
+                    if (phase == 0 && t >= 100 && NavPlanner.built) { phase = 1; unit(); if (!NavWalker.ON) { offCheck(); finishUnitOnly(); return true; } spawn(); t0 = now; return false; } // P38 L10: planner off = kill-switch check + UNIT only (the 14 walks are NavWalker-only)
                     if (phase == 1 && now - t0 > 3_000) { phase = 2; t0 = now; for (W w : ws) { w.lastMove = now; w.lastAt = w.bot.getLocation(); } log("walks start"); }
                     if (phase != 2) return false;
                     boolean all = true;
@@ -212,6 +212,21 @@ public final class TestB21A implements StartupListener {
                     ws.add(w);
                 }
                 log("bots: " + ws.size());
+            }
+
+            /** P38 L10: planner off (-Dnav=false): NavWalker.step must hand back no hop and tollStuck must give up at once. */
+            void offCheck() {
+                AIPlayer ob = TestCR1.bot(STARTS[0], 10, 1, 1, 1);
+                Location h = NavWalker.step(ob, ALK, true);
+                boolean stuck = AfkTasks.Runner.tollStuck(ob, ALK);
+                if (h != null || !stuck) fails++;
+                log("RESULT OFF kill switch: no planner hop, tollStuck true (expect null, true): hop " + h + ", tollStuck " + stuck + " -> " + (h == null && stuck ? "PASS" : "FAIL"));
+            }
+
+            void finishUnitOnly() {
+                log("RESULT WALK skipped: planner off (the 14 walks are NavWalker-only)");
+                log("RESULT summary: UNIT only, planner off; " + (fails == 0 ? "PASS" : "FAIL"));
+                log("DONE");
             }
 
             void finish(long now) {
