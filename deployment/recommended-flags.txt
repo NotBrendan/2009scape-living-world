@@ -1,10 +1,9 @@
 # Recommended feature switches: the full skill, Slayer, Summoning and economy behaviour, tested together.
-# Every one is OFF by default in the code, so a fresh server behaves like the older releases until you turn them on.
-# One switch per line. To use them all, add them to the java command line, e.g. (Linux):
-#   java $(grep -v '^#' deployment/live-flags.txt | sed 's/^/-D/; s/$/=true/' | tr '
-' ' ') -cp overlay:server.jar core.Server
-# Turn them on together: several build on each other (the slayer.* and clerk.* families, farming.v2 on farming).
-# Not listed on purpose: test-only switches (smartbots.seed.*, test.*, scen.*), which refuse to run on a normal server.
+# Every one is off by default, so a fresh server behaves like the older releases until you turn them on.
+# One switch name per line; each becomes -D<name>=true on the java command line. To pass them all (Linux/macOS):
+#   java $(sed -n 's/^\([a-z][A-Za-z0-9.]*\)$/-D\1=true/p' deployment/recommended-flags.txt) -cp overlay:server.jar core.Server
+# Turn them on as a set: several build on each other (the bots.slayer.* and clerk.* families, bots.farming.v2 on bots.farming).
+# Left out on purpose: test-only switches (smartbots.seed.*, scen.*, test.*), which refuse to run on a normal server anyway.
 artisans.arrowFix
 artisans.herbFix
 artisans.herbSupply
