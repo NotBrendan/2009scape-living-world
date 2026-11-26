@@ -36,12 +36,11 @@ Highlights, by area (full list in [docs/CHANGELOG.md](docs/CHANGELOG.md)):
 * **Slayer:** Turael and Vannaka, plus Chaeldar and Duradel (off and not in the recommended set yet;
   turn on `bots.slayer.chaeldar` and `bots.slayer.duradel` to try them), with points, banking first, tasks that fit the
   bot's purse, and fixes for the bats, ice giants and the Vannaka door.
-* **Summoning:** Wolf Whistle, pouches, healing and combat familiars, and the beast of burden (first
-  picked up by a bot at Summoning 13).
+* **Summoning:** Wolf Whistle, pouches, healing and combat familiars, and the beast of burden (bots use it from Summoning 13).
 * **Gathering:** Mining and Fishing Guilds, sharks, power mining, tree and herb farm runs, Hunter
   (birds), Barbarian agility laps, Ardougne pickpocketing, nature and law rune runs.
 * **Artisan skills:** smiths smelt their own bars, fletchers make arrows and their own bows, cooks burn
-  less and cook on fires, plank types for Construction, enchanting, superheat and High Alchemy.
+  less and cook on fires, plank types for Construction, enchanting and High Alchemy.
 * **Economy safety:** a clerk with a daily budget, a boot-time fair, and a coin watch that knows the
   normal hourly swing and ignores boot-time sea crossings, so the new spending does not drain the
   bots' coins unnoticed.
