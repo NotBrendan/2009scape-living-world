@@ -23,6 +23,10 @@ import java.nio.file.Paths;
  *   O:  flag off, the same rise: no RISE line and nothing recorded.
  *   L:  flag on, the same rise while the count jumps 50 -> 100 (logins): no RISE.
  *   G:  source keeps the existing "[CoinWatch] baseline ", "total ", "ALARM coin-drain" formats.
+ *   H:  (train-3 audit finding 1) the fleet default: smartbots.count alone with the flag off (90), count + high with
+ *       -Dcoinwatch.fleetHigh=true (100); the flag is off by default and fleet() uses the helper.
+ *   H2: 102 bots logging in one a minute from 60: the 90% rule takes the baseline at 81 bots with the flag off, at 90 with it on.
+ *   H3: (P41) the high tier as startup spawns it, max(smartbots.high, saved high-tier profiles): live 90 + 12 = 102, baseline at 92.
  * Prints one PASS/FAIL line per check and "[TestP38CoinWatch] DONE n pass, m fail"; exit code 1 on any fail.
  */
 public final class TestP38CoinWatch {
@@ -118,6 +122,22 @@ public final class TestP38CoinWatch {
         check("G existing formats kept: baseline/total/hour/ALARM",
                 src.contains("log(\"baseline \" + t[0] + \" gp, \" + t[1] + \" bots\");") && src.contains("new StringBuilder(\"total \").append(cur).append(\" gp, \").append(bots).append(\" bots, baseline \")")
                         && src.contains("log(\"ALARM coin-drain (bug 296): \" + lastAlarm);") && src.contains("line.append(\"; hour: was \")"));
+
+        // H (train-3 audit finding 1): the fleet default counts the high tier only with -Dcoinwatch.fleetHigh=true
+        boolean wired = src.contains("fleetDefault(FLEET_HIGH, SmartAdventurers.COUNT, highPlanned(SmartAdventurers.HIGH, SmartAdventurers.SAVED_HIGH.size()))");
+        check("H fleet default 90+10: flag off -> " + CoinWatch.fleetDefault(false, 90, 10) + " (expect 90), on -> " + CoinWatch.fleetDefault(true, 90, 10) + " (expect 100), on with 0+0 -> " + CoinWatch.fleetDefault(true, 0, 0)
+                        + "; fleetHigh flag " + CoinWatch.FLEET_HIGH + " (expect false), fleet() uses the helper " + wired,
+                CoinWatch.fleetDefault(false, 90, 10) == 90 && CoinWatch.fleetDefault(true, 90, 10) == 100 && CoinWatch.fleetDefault(true, 0, 0) == 0 && CoinWatch.fleetDefault(false, 0, 10) == 0 && !CoinWatch.FLEET_HIGH && wired);
+        // H2: the 90% rule on both defaults, the live 102 bots arriving one a minute from 60
+        int[] ramp = new int[43]; for (int i = 0; i < ramp.length; i++) ramp[i] = 60 + i; // 60..102
+        int hOff = firstReady(ramp, CoinWatch.fleetDefault(false, 90, 10)), hOn = firstReady(ramp, CoinWatch.fleetDefault(true, 90, 10));
+        check("H2 102 bots logging in one a minute from 60: baseline at " + (hOff < 0 ? -1 : ramp[hOff]) + " bots with the flag off (expect 81), " + (hOn < 0 ? -1 : ramp[hOn]) + " with it on (expect 90)",
+                hOff >= 0 && hOn >= 0 && ramp[hOff] == 81 && ramp[hOn] == 90);
+
+        // H3 (P41): the live fleet is 90 + 12 remembered high-tier bots (startup restores every saved high-tier profile), so 102, lock at 92
+        int live = CoinWatch.fleetDefault(true, 90, CoinWatch.highPlanned(10, 12)), h3 = firstReady(ramp, live);
+        check("H3 high tier planned max(10, 12 saved) -> " + CoinWatch.highPlanned(10, 12) + " (expect 12), max(10, 3) -> " + CoinWatch.highPlanned(10, 3) + " (expect 10); fleet " + live + " (expect 102), baseline at " + (h3 < 0 ? -1 : ramp[h3]) + " bots (expect 92)",
+                CoinWatch.highPlanned(10, 12) == 12 && CoinWatch.highPlanned(10, 3) == 10 && live == 102 && h3 >= 0 && ramp[h3] == 92);
 
         reset();
         System.out.println("[TestP38CoinWatch] DONE " + pass + " pass, " + fail + " fail");

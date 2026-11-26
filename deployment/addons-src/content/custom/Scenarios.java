@@ -452,7 +452,7 @@ public final class Scenarios implements StartupListener {
             retired = true; ACTIVE.remove(this);
             try { bot.removeAttribute(CALM); } catch (Throwable ignored) { } // batch 18 rc3: reversible
             System.out.println("[Replay] " + bot.getUsername() + " retired: " + why + " (" + counts() + ")");
-            try { ((AIPlayer) bot).clear(); } catch (Throwable t) { System.out.println("[Replay] could not retire " + bot.getUsername() + ": " + t); }
+            try { Bob.leave(bot, "clear"); ((AIPlayer) bot).clear(); } catch (Throwable t) { System.out.println("[Replay] could not retire " + bot.getUsername() + ": " + t); }
         }
 
         /** At the start: the scenario's profile where it is safe (our own throwaway bot), then the walk. */
@@ -521,7 +521,7 @@ public final class Scenarios implements StartupListener {
             lastHere = here;
             if (ent != null && aim == ent[1] && here.getDistance(aim) <= 2) { // at the ladder or trapdoor: climb down like a player (AfkTasks.Runner.walk)
                 try { bot.getAnimator().animate(new core.game.world.update.flag.context.Animation(827)); } catch (Throwable ignored) { }
-                bot.getProperties().setTeleportLocation(ent[2]); aim = to; if (r != null) r.dest = to; best = Double.MAX_VALUE; bestTick = ticks; blocks.clear(); note("climbed down", here); lastHere = ent[2]; return;
+                Bob.tele(bot).getProperties().setTeleportLocation(ent[2]); aim = to; if (r != null) r.dest = to; best = Double.MAX_VALUE; bestTick = ticks; blocks.clear(); note("climbed down", here); lastHere = ent[2]; return;
             }
             double dist = here.getZ() == aim.getZ() ? here.getDistance(aim) : 9_999;
             boolean shop = "shop".equals(sc.walker);

@@ -176,7 +176,7 @@ final class QuestShieldOfArrav {
     static boolean inStore(Player p) { Location l = p.getLocation(); return l.getZ() == 0 && l.getY() <= 3385 && l.getY() >= 3378 && l.getX() >= 3247 && l.getX() <= 3256; }
     static boolean upStore(Player p) { Location l = p.getLocation(); return l.getZ() == 1 && l.getX() >= 3236 && l.getX() <= 3258 && l.getY() >= 3376 && l.getY() <= 3392; }
     static boolean upHouse(Player p) { Location l = p.getLocation(); return l.getZ() == 1 && l.getX() >= 3176 && l.getX() <= 3200 && l.getY() >= 3378 && l.getY() <= 3402; }
-    static boolean behindBlackArmDoor(Player p) { Location l = p.getLocation(); return l.getZ() == 0 && l.getY() >= 3388 && l.getY() <= 3394 && l.getX() >= 3180 && l.getX() <= 3192; }
+    static boolean behindBlackArmDoor(Player p) { Location l = p.getLocation(); return l.getZ() == 0 && l.getY() >= 3388 && l.getY() <= 3394 && l.getX() >= ROOM_W && l.getX() <= ROOM_E; } // P51: x 3180-3181 and 3190-3192 are outside the walls
 
     static Item first(Player p, int id) {
         for (Item i : p.getInventory().toArray()) if (i != null && i.getId() == id) return i;
@@ -279,11 +279,27 @@ final class QuestShieldOfArrav {
         return false;
     }
 
+    /**
+     * P83 (-Dquest.arravFix; live train-33: 9 FAILED + 5 ABANDONED "nothing in bot stock after 30 min more [phase 2]" at the
+     * swap): somewhere the other gang's half can come from now. One in the Arrav pool, or a bot of the other gang on the quest
+     * at stage 70+ that still needs its swap (it is on its way to the museum, or there).
+     */
+    static boolean swapSource(Player me) { return Pool.count(otherHalf(me)) > 0 || otherGangComing(me); }
+    static boolean otherGangComing(Player me) {
+        boolean ph = phoenix(me);
+        for (QuestRunner r : QuestRunner.ACTIVE.values()) {
+            if (r == null || r.over || r.bot == me || r.script == null || !SLUG.equals(r.script.slug) || !r.bot.isActive()) continue;
+            try { if (phoenix(r.bot) != ph && r.stage() >= 70 && !bothHalvesOrLater(r.bot)) return true; } catch (Throwable ignored) { }
+        }
+        return false;
+    }
+
     /** QuestBook.eligible's gate for a NEW start (resumes don't come through here): enough coins for Baraek, and a Black Arm bot only when the store can be robbed. */
     static boolean mayStart(Player p) { return whyNot(p) == null; }
     static String whyNot(Player p) {
         int stage = 0; try { stage = p.getQuestRepository().getStage(Q); } catch (Throwable ignored) { }
         if (stage < 40 && Ledger.Wallet.coins(p) < START_COINS) return "wallet " + Ledger.Wallet.coins(p) + " < " + START_COINS + " gp (Baraek's 20)"; // batch 17 item2: live "short of Coins" abandons at step 7
+        if (FIX && stage >= 70 && certsOrLater(p) && !bothHalvesOrLater(p) && !swapSource(p)) return "swap: no " + otherHalf(p) + " in the Arrav pool and no " + gangName(!phoenix(p)) + " bot on its way to the museum"; // P83
         if (stage >= 70 || phoenix(p)) return null;
         if (any(p, KEY) || count(p, CROSSBOW) >= 2) return null; // brings its own
         return blackArmSupplied(p) ? null : "Black Arm side with no key 759 / crossbows 767 in stock or the pool and no Phoenix bot at stage 60+"; // batch 17 item1 (audit Q-23): was a 1.5-2.5 h stall
@@ -555,6 +571,12 @@ final class QuestShieldOfArrav {
                 return exchange(r, p, o, partnerKey, kind);
             }
             if (++wait % 5 == 0) tryPair(me, p);
+            if (FIX && !keyMode && wait % 5 == 0 && me.partner == null && !otherGangComing(p)) { // P83: nobody of the other gang is coming: the pool now, not after 30-60 min
+                r.log("  no " + gangName(!me.phoenix) + " bot on its way to the museum: bot stock instead");
+                synchronized (WAITING) { WAITING.remove(me.key, me); }
+                phase = 2; poolSince = System.currentTimeMillis(); wait = 0;
+                return QuestSteps.St.RUNNING;
+            }
             long since = SINCE.getOrDefault(me.key, System.currentTimeMillis());
             long waited = System.currentTimeMillis() - since;
             boolean longer = waited < 2 * WAIT_MS && (otherGangQuesting(p, me.phoenix) || questing(LENT.get(me.key)) != null);
@@ -614,7 +636,20 @@ final class QuestShieldOfArrav {
                 }
                 if (has(otherHalf(p), 1).test(p) || Pool.take(p, otherHalf(p))) { SINCE.remove(QuestRunner.key(p)); return QuestSteps.St.DONE; }
             }
+            if (FIX && !keyMode && (!otherGangComing(p) || System.currentTimeMillis() - poolSince > WAIT_MS)) return setAside(r, p); // P83
             if (System.currentTimeMillis() - poolSince > WAIT_MS) return fail("nothing in bot stock after " + WAIT_MS / 60_000 + " min more");
+            return QuestSteps.St.RUNNING;
+        }
+
+        /**
+         * P83: no other-gang half in bot stock and none on its way. The spare is in the pool already (the other gang's bot takes
+         * it when it comes); stop without blame and leave the quest until swapSource holds (whyNot keeps it from being picked).
+         */
+        QuestSteps.St setAside(QuestRunner r, Player p) {
+            r.log("  no " + otherHalf(p) + " in bot stock and no " + gangName(!phoenix(p)) + " bot on its way: set aside until one turns up (not abandoned)");
+            SINCE.remove(QuestRunner.key(p));
+            r.stopHere(false);
+            QuestBook.setAside(p, r.script);
             return QuestSteps.St.RUNNING;
         }
 
@@ -633,8 +668,8 @@ final class QuestShieldOfArrav {
 
     /** Down the alley and through the two doors to Katrine's room (from the south a straight walk ends outside the wall at 3188,3381). */
     static void intoHouse(QuestScript s, String again, int stage) {
-        s.step(ba(new QuestSteps.Walk("into the Black Arm alley" + again, HOUSE_ALLEY, 1).done(p -> stageAtLeast(Q, stage).test(p) || p.getLocation().getZ() == 0 && (p.getLocation().getDistance(HOUSE_ALLEY) <= 1 || p.getLocation().getX() <= 3195 && p.getLocation().getX() >= 3180 && p.getLocation().getY() >= 3383 && p.getLocation().getY() <= 3387))));
-        s.step(ba(new QuestSteps.Walk("through the Black Arm house door" + again, HOUSE_HALL, 1).done(p -> stageAtLeast(Q, stage).test(p) || p.getLocation().getZ() == 0 && (p.getLocation().getDistance(HOUSE_HALL) <= 1 || p.getLocation().getX() <= 3189 && p.getLocation().getX() >= 3180 && p.getLocation().getY() >= 3382 && p.getLocation().getY() <= 3387))));
+        s.step(ba(new QuestSteps.Walk("into the Black Arm alley" + again, HOUSE_ALLEY, 1).done(p -> stageAtLeast(Q, stage).test(p) || p.getLocation().getZ() == 0 && (p.getLocation().getDistance(HOUSE_ALLEY) <= 1 || p.getLocation().getX() <= 3195 && p.getLocation().getX() >= ROOM_W && p.getLocation().getY() >= 3383 && p.getLocation().getY() <= 3387))));
+        s.step(ba(new QuestSteps.Walk("through the Black Arm house door" + again, HOUSE_HALL, 1).done(p -> stageAtLeast(Q, stage).test(p) || p.getLocation().getZ() == 0 && (p.getLocation().getDistance(HOUSE_HALL) <= 1 || p.getLocation().getX() <= 3189 && p.getLocation().getX() >= ROOM_W && p.getLocation().getY() >= 3382 && p.getLocation().getY() <= 3387))));
     }
 
     /**
@@ -644,13 +679,94 @@ final class QuestShieldOfArrav {
      */
     static void backToDoor(QuestScript s) {
         java.util.function.Predicate<Player> skip = p -> !stageAtLeast(Q, 70).test(p) || blackShieldOrLater(p) || behindBlackArmDoor(p) || upHouse(p);
-        s.step(ba(new QuestSteps.Walk("back into the Black Arm alley for the door", HOUSE_ALLEY, 1).done(p -> skip.test(p) || p.getLocation().getZ() == 0 && (p.getLocation().getDistance(HOUSE_ALLEY) <= 1 || p.getLocation().getX() <= 3195 && p.getLocation().getX() >= 3180 && p.getLocation().getY() >= 3382 && p.getLocation().getY() <= 3387))));
-        s.step(ba(new QuestSteps.Walk("back into Katrine's room", HOUSE_HALL, 1).done(p -> skip.test(p) || p.getLocation().getZ() == 0 && (p.getLocation().getDistance(HOUSE_HALL) <= 1 || p.getLocation().getX() <= 3189 && p.getLocation().getX() >= 3180 && p.getLocation().getY() >= 3382 && p.getLocation().getY() <= 3387))));
+        s.step(ba(new QuestSteps.Walk("back into the Black Arm alley for the door", HOUSE_ALLEY, 1).done(p -> skip.test(p) || p.getLocation().getZ() == 0 && (p.getLocation().getDistance(HOUSE_ALLEY) <= 1 || p.getLocation().getX() <= 3195 && p.getLocation().getX() >= ROOM_W && p.getLocation().getY() >= 3382 && p.getLocation().getY() <= 3387))));
+        if (FIX) { // P51: all the way in. From the hall (east of the closed door 24381 at 3190,3384) the click on 2399 walked round the outside to 3181,3387 (farm trial 11-13)
+            s.step(ba(doorFromRoom().done(skip)));
+            return;
+        }
+        s.step(ba(new QuestSteps.Walk("back into Katrine's room", HOUSE_HALL, 1).done(p -> skip.test(p) || p.getLocation().getZ() == 0 && (p.getLocation().getDistance(HOUSE_HALL) <= 1 ||p.getLocation().getX() <= 3189 && p.getLocation().getX() >= ROOM_W && p.getLocation().getY() >= 3382 && p.getLocation().getY() <= 3387))));
+    }
+
+    /**
+     * P51 -Dquest.arravFix (default off). Live 11-12/13: "through the Black Arm door: Open on [2399] didn't do it
+     * (5 clicks)" clicked from 3181,3387, the same seven bots every day for a week. 3181,3387 is OUTSIDE the room's west
+     * wall (nav-p0.bin: 3181 has a wall on its east side, 3182 one on its west; the room is x 3182..3189, y 3382..3387,
+     * the back room x 3182..3189, y 3388+), but the alley/room steps and behindBlackArmDoor counted x >= 3180 as inside.
+     * The walker can't take a bot through the house doors 24381 either (farm trial: from the alley it went round to the
+     * west side and stopped "close enough"). With the flag the ranges are the real rooms and doorFromRoom goes door by door.
+     * Also a guard: a stage-70 bot in NEITHER gang (ShieldArravPlugin then answers 2399 "locked from the inside") gets the
+     * gang phoenix() picks back. Not seen on live (a stuck bot passed the door on 11-13 13:44 UTC with its gang intact).
+     */
+    static final boolean FIX = Boolean.getBoolean("quest.arravFix");
+    static final int ROOM_W = FIX ? 3182 : 3180, ROOM_E = FIX ? 3189 : 3192;
+    static final Location BELOW_DOOR = Location.create(3185, 3387, 0); // the room side of door 2399
+
+    static final Location ALLEY_DOOR = Location.create(3196, 3384, 0), HALL_DOOR = Location.create(3190, 3384, 0); // the doors 24381 (west edges)
+
+    /**
+     * P51: the walker can't take the bot through the house doors 24381 (farm trial 11-13: from the alley it went round the
+     * outside and stopped at 3180,3388 west of the room, "close enough"; live bots clicked 2399 from 3181,3387 the same way).
+     * So the step goes door by door: stand on the alley door's tile, the hall door's tile, then below door 2399, and at each
+     * runs what the engine runs for that door (DoorActionHandler.handleAutowalkDoor; for 2399 that is ShieldArravPlugin's
+     * Black Arm branch, so a bot not in the gang is refused as a player would be).
+     */
+    static QuestSteps.Step doorFromRoom() {
+        final QuestSteps.Mover m = new QuestSteps.Mover();
+        final int[] st = {0, 0};
+        final Location[] at = {null}, thru = {null};
+        return new QuestSteps.Custom("through the house to the Black Arm door", 300, r -> { at[0] = null; thru[0] = null; st[0] = 0; st[1] = 0; }, r -> {
+            Player p = r.bot;
+            if (behindBlackArmDoor(p) || upHouse(p)) return QuestSteps.St.DONE;
+            if (st[0] > 0) { st[0]--; return QuestSteps.St.RUNNING; }
+            if (thru[0] != null) { // P72: through an open house door
+                if (p.getLocation().equals(thru[0])) thru[0] = null;
+                else { QuestSteps.St s = m.tick(p); if (s == QuestSteps.St.FAILED) { r.log("  can't walk through to " + thru[0] + " from " + p.getLocation()); return QuestSteps.St.FAILED; } if (s == QuestSteps.St.RUNNING) return QuestSteps.St.RUNNING; thru[0] = null; }
+            }
+            Location l = p.getLocation();
+            boolean room = inRoom(p), hall = l.getZ() == 0 && l.getX() >= 3190 && l.getX() <= 3195 && l.getY() >= 3383 && l.getY() <= 3386;
+            Location stand = room ? BELOW_DOOR : hall ? HALL_DOOR : ALLEY_DOOR, door = room ? BLACKARM_DOOR_AT : stand;
+            if (!stand.equals(at[0])) { at[0] = stand; m.reset(stand, 0); }
+            if (!l.equals(stand)) { QuestSteps.St s = m.tick(p); if (s == QuestSteps.St.FAILED) { r.log("  can't reach " + stand + " from " + l); return QuestSteps.St.FAILED; } return QuestSteps.St.RUNNING; }
+            if (room && !attr(p, "black-arm-gang")) { r.log("  not a Black Arm member: door 2399 stays locked"); return QuestSteps.St.FAILED; }
+            core.game.node.scenery.Scenery d = room ? QuestSteps.findScenery(p, door, 0, new int[]{BLACKARM_DOOR}, null, null) : QuestSteps.findScenery(p, door, 0, null, "door", "Open"); // P72: "Open": an open door is walked through
+            if (d == null && !room) { // P72: live "no door at [3190, 3384, 0]" (10 failures, 11-13..15): the house door stood open (someone went through), so no closed "door" on its tile: walk on through to the tile past it
+                Location past = door.transform(-1, 0, 0);
+                if (++st[1] > 8) { r.log("  the doors didn't take me through, at " + l); return QuestSteps.St.FAILED; }
+                r.log("  no closed door at " + door + ": walking through to " + past);
+                thru[0] = past; at[0] = null; m.reset(past, 0);
+                return QuestSteps.St.RUNNING;
+            }
+            if (d == null) { r.log("  no door at " + door); return QuestSteps.St.FAILED; }
+            if (++st[1] > 8) { r.log("  the doors didn't take me through, at " + l); return QuestSteps.St.FAILED; }
+            core.game.global.action.DoorActionHandler.handleAutowalkDoor(p, d);
+            st[0] = 4;
+            return QuestSteps.St.RUNNING;
+        });
+    }
+
+    static boolean inRoom(Player p) { Location l = p.getLocation(); return l.getZ() == 0 && l.getX() >= 3182 && l.getX() <= 3189 && l.getY() >= 3382 && l.getY() <= 3387; }
+
+    /** True when the bot is at stage 70..99 in no gang: the state the engine can't get out of. */
+    static boolean lostGang(Player p) {
+        return stageAtLeast(Q, 70).test(p) && !stageAtLeast(Q, 100).test(p) && !attr(p, "phoenix-gang") && !attr(p, "black-arm-gang");
+    }
+
+    /** Sets the gang phoenix() picks; returns its name, or null when nothing was lost. */
+    static String restoreGang(Player p) {
+        if (!lostGang(p)) return null;
+        boolean ph = phoenix(p);
+        p.setAttribute(ph ? "/save:phoenix-gang" : "/save:black-arm-gang", true);
+        return gangName(ph);
     }
 
     static QuestScript build() {
         QuestScript s = QuestScript.of(Q, SLUG, "Shield of Arrav").startAt(3210, 3494, 0).minutes(50).coins(600).xp(0).unlock(20)
                 .level(core.game.node.entity.skill.Skills.HITPOINTS, 10);
+        if (FIX) s.step(new QuestSteps.Custom("give back the lost gang", 2, null, r -> {
+            String g = restoreGang(r.bot);
+            if (g != null) r.log("  stage 70 in no gang: back in the " + g + " Gang");
+            return QuestSteps.St.DONE;
+        }).done(p -> !lostGang(p)));
 
         // ================= the Phoenix side: Reldo, the book, Baraek, Straven, Jonny, the chest
         s.step(ph(new QuestSteps.Custom("check The Knight's Sword isn't at Reldo's stage", 2, null, r -> { r.log("  The Knight's Sword is at stage 10: Reldo only talks about that"); return QuestSteps.St.FAILED; })

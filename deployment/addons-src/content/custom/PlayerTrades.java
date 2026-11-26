@@ -154,7 +154,7 @@ public final class PlayerTrades implements StartupListener {
 
     /** Between trips (or loitering) at a bank or the Exchange, not on any errand. */
     static boolean idle(SmartAdventurers.Brain br) {
-        if (br.runner != null || br.shopAt != null || br.delivering || br.graveAt != null || br.mill != 0) return false;
+        if (br.runner != null || (SmartAdventurers.BRAIN_FIX1 ? br.errand() : br.shopAt != null || br.delivering || br.graveAt != null || br.mill != 0 || Scenes.Greet.escorting(br.bot) || br.bone != 0 || br.summon != 0 || br.farm != 0 || br.slay != 0)) return false;
         Location at = br.bot.getLocation();
         if (at.getDistance(SmartAdventurers.GRAND_EXCHANGE) <= 25) return true;
         for (Location b : AfkTasks.BANKS) if (b.getDistance(at) <= 15) return true;
@@ -230,7 +230,7 @@ public final class PlayerTrades implements StartupListener {
                 int want = want(bot, br, id);
                 if (want <= 0) { BotChat.say(bot, BotChat.pick("No use for " + MarketBrain.name(id).toLowerCase(Locale.ROOT) + ", mate.", "What would I do with " + MarketBrain.name(id).toLowerCase(Locale.ROOT) + "?")); s.sigSince = now + 30_000; return; }
                 if (n > want) { BotChat.say(bot, "I only need " + want + " " + MarketBrain.name(id).toLowerCase(Locale.ROOT) + "."); s.sigSince = now + 30_000; return; }
-                total += (long) Math.max(1, MarketBrain.botRef(id)) * n; // audit E-4: a price alts can't push up
+                total += (long) Math.max(1, MarketBrain.botCeilFor(id)) * n; // econ3 M2 (flag off = botRef); audit E-4: a price alts can't push up
             }
             if (total > Ledger.Wallet.coins(bot) - 300 || total > Integer.MAX_VALUE) { BotChat.say(bot, "Can't afford that lot. " + String.format("%,d", total) + " gp at guide."); s.sigSince = now + 30_000; return; }
             // Coins out of the bank into the window.
@@ -429,7 +429,7 @@ public final class PlayerTrades implements StartupListener {
         try { bot.getEquipment().refresh(); } catch (Throwable ignored) { }
         boughtToday++; coinsToday += s.offered;
         BotChat.Trust.add(s.human, bot, 1);
-        Ledger.PAID += s.offered; // coins went to a player: out of the bots' economy
+        Ledger.addPaid(s.offered); // coins went to a player: out of the bots' economy
         BotChat.say(bot, BotChat.pick("Cheers mate, needed that!", "Nice one, " + s.human.getUsername() + ". Exactly what I was after.", "Pleasure. Saved me a trip.", "Lovely, just what I was after.", "Sorted. Thanks!", "That'll do nicely. Cheers.", "Pleasure doing business!", "Saved me a walk. Ta!"));
         StringBuilder what = new StringBuilder();
         for (Map.Entry<Integer, Integer> e : s.expect.entrySet()) what.append(e.getValue()).append(" x ").append(MarketBrain.name(e.getKey())).append("; ");

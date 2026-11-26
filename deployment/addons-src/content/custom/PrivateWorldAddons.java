@@ -154,7 +154,7 @@ public final class PrivateWorldAddons implements StartupListener {
             if (left <= 0 || item == COINS || price <= 0) continue;
             if (now - offer.getTimeStamp() < BUYER_MIN_OFFER_AGE_MS) continue;
 
-            int guide = MarketBrain.botRef(item); // audit E-4: not the raw guide, which alt-to-alt trades can push up
+            int guide = MarketBrain.botCeilFor(item); // econ3 M2 (flag off = botRef); audit E-4: not the raw guide, which alt-to-alt trades can push up
             int cap = Bounty.wantedNow(item) ? Bounty.BUYER_WANTED_PERCENT : Bounty.BUYER_PERCENT; // morning review 10-23: 90% (wanted 100%); bots never sell under 92% and never sell wanted items, so no loop pays
             if (guide <= 0 || price > (long) guide * cap / 100) continue;
 

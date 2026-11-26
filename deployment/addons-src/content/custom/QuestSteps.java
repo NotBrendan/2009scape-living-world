@@ -82,7 +82,7 @@ final class QuestSteps {
         St tick(Player bot) {
             Location here = bot.getLocation();
             if (bot.isArtificial() && AfkTasks.Runner.essenceMine(here) && !AfkTasks.Runner.essenceMine(dest)) { // quest fix 10-23: in the rune essence mine when the walk starts (live: "stuck at [2935, 4815, 0] with no teleport fare"): out by the portal, free, to Aubury's shop, as AfkTasks.goTo leaves it
-                if (bot.getProperties().getTeleportLocation() == null) { bot.getPulseManager().clear(); bot.getProperties().setTeleportLocation(Location.create(3253, 3398, 0)); }
+                if (bot.getProperties().getTeleportLocation() == null) { bot.getPulseManager().clear(); Bob.tele(bot).getProperties().setTeleportLocation(Location.create(3253, 3398, 0)); }
                 best = Double.MAX_VALUE; stall = 0; last = "out through the essence mine portal";
                 return St.RUNNING;
             }
@@ -364,6 +364,8 @@ final class QuestSteps {
         Interact until(Predicate<Player> u) { this.until = u; return this; }
         /** Picks for a dialogue the option opens (e.g. "Climb up or down?"). */
         Interact picks(Object... p) { this.picks = p; return this; }
+        boolean viaHandler; // P72: the climb fallback runs the object's own option handler first (WizardTowerPlugin's 2147: live climbLadder "climbing" left bots at 3103,3162)
+        Interact viaHandler() { this.viaHandler = true; return this; }
         @Override void begin(QuestRunner r) { super.begin(r); clicks = 0; waitTicks = 0; driver = null; }
         @Override St tick(QuestRunner r) {
             Player bot = r.bot; lastBot = bot;
@@ -386,10 +388,17 @@ final class QuestSteps {
             Node n = npc ? findNpc(bot, near, radius, ids, nameLower) : findScenery(bot, near, radius, ids, nameLower, option);
             if (n == null) return fail("no " + label() + " with " + option + " near " + (near != null ? near : bot.getLocation()));
             clearPopups(bot);
+            if (!npc && viaHandler && clicks >= 2 && !option.toLowerCase(Locale.ROOT).startsWith("climb") && bot.getLocation().getDistance(n.getLocation()) <= 3) { // P72: a door the click didn't take (Prince Ali's cell door 2881): the object's own option handler, as its listener would
+                Scenery sc = (Scenery) n; boolean ok = false;
+                try { core.game.interaction.OptionHandler h = core.cache.def.impl.SceneryDefinition.getOptionHandler(sc.getId(), option.toLowerCase(Locale.ROOT)); if (h != null) ok = h.handle(bot, sc, option.toLowerCase(Locale.ROOT)); } catch (Throwable ignored) { }
+                r.log("  handler fallback on " + sc.getId() + "@" + sc.getLocation() + " from " + bot.getLocation() + ": " + (ok ? "handled" : "no handler"));
+                if (ok) { clicks++; waitTicks = 0; target = sc.getId() + "@" + sc.getLocation() + " (handler)"; clickedFrom = bot.getLocation(); return St.RUNNING; }
+            }
             if (!npc && clicks >= 2 && option.toLowerCase(Locale.ROOT).startsWith("climb") && bot.getLocation().getDistance(n.getLocation()) <= 3) { // a stair the click didn't take: the climb handler directly, as its listener would
                 Scenery sc = (Scenery) n;
                 boolean ok = false;
-                try { ok = core.game.global.action.ClimbActionHandler.climbLadder(bot, sc, option.toLowerCase(Locale.ROOT)); } catch (Throwable ignored) { }
+                if (viaHandler) try { core.game.interaction.OptionHandler h = core.cache.def.impl.SceneryDefinition.getOptionHandler(sc.getId(), option.toLowerCase(Locale.ROOT)); if (h != null) ok = h.handle(bot, sc, option.toLowerCase(Locale.ROOT)); } catch (Throwable ignored) { }
+                if (!ok) try { ok = core.game.global.action.ClimbActionHandler.climbLadder(bot, sc, option.toLowerCase(Locale.ROOT)); } catch (Throwable ignored) { }
                 if (!ok) {
                     Location dest = null;
                     try { dest = core.game.global.action.ClimbActionHandler.getDestination(sc); } catch (Throwable ignored) { }
@@ -424,6 +433,8 @@ final class QuestSteps {
         boolean single;
         /** Only one in the pack (the rest banked): with two, cooking asks "how many?" instead of cooking. */
         UseOn single() { this.single = true; return this; }
+        /** quest2 (pure): how many of the item to take out of the bank before the first click: one when the pack has none and the bank has it. */
+        static int pullCount(int inPack, int inBank, int clicks) { return clicks == 0 && inPack < 1 && inBank >= 1 ? 1 : 0; }
         @Override void begin(QuestRunner r) { super.begin(r); clicks = 0; waitTicks = 0; gone = 0; driver = null; walked = false; found = null; sinceFind = 0; }
         @Override St tick(QuestRunner r) {
             Player bot = r.bot;
@@ -454,6 +465,10 @@ final class QuestSteps {
                 if (until == null) return St.DONE;
                 if (clicks >= 5) return fail("using " + itemId + " on " + target.getName() + " didn't do it (5 clicks, at " + bot.getLocation() + ")");
                 if (openDoorToward(bot, target.getLocation(), 6)) { r.log("  opened a gate or door on the way to " + target.getName()); waitTicks = 0; walked = false; return St.RUNNING; } // a fenced pen: the click can't path in
+            }
+            if (QuestRunner.FIX2 && pullCount(bot.getInventory().getAmount(itemId), bot.getBank().getAmount(itemId), clicks) > 0) { // quest2: the item was banked (a restart, makeRoom): take it back before failing
+                QuestRunner.makeRoom(bot, 1);
+                if (bot.getBank().remove(new Item(itemId, 1))) { if (!bot.getInventory().add(new Item(itemId, 1))) bot.getBank().add(new Item(itemId, 1)); else r.log("  (quest2) took " + MarketBrain.name(itemId) + " out of the bank to use it"); }
             }
             Item it = null;
             for (Item i : bot.getInventory().toArray()) if (i != null && i.getId() == itemId) { it = i; break; }
@@ -488,10 +503,13 @@ final class QuestSteps {
         Gather count(java.util.function.ToIntFunction<Player> f) { this.want = f; return this; }
         Gather targets(String... t) { this.targets = t; return this; }
         Gather products(int... p) { this.products = p; return this; }
+        int retries, retriesLeft; // P72: runners restarted when one stops short (live Pirate's bananas stopped at 9/10)
+        Gather retries(int k) { this.retries = k; return this; }
         @Override void begin(QuestRunner r) {
             super.begin(r);
             runner = null;
             n = want.applyAsInt(r.bot);
+            retriesLeft = retries;
             // the quest walker takes it to the spot (it opens doors and stops close enough); the runner works from there.
             // The runner's own long walks gave up out of Lumbridge for bots without teleport money.
             approaching = r.bot.getLocation().getZ() != spot.getZ() || r.bot.getLocation().getDistance(spot) > 12;
@@ -531,6 +549,7 @@ final class QuestSteps {
                 startRunner(r);
             }
             if (runner == null) return fail("no runner");
+            if ((runner.halted || AfkTasks.RUNNING.get(p.getUsername().toLowerCase(Locale.ROOT)) != runner) && retriesLeft > 0) { retriesLeft--; r.log("  the " + task.key + " runner stopped: " + runner.last + " (" + p.getInventory().getAmount(itemId) + "/" + n + "), starting it again"); startRunner(r); return St.RUNNING; }
             if (runner.halted || AfkTasks.RUNNING.get(p.getUsername().toLowerCase(Locale.ROOT)) != runner) return fail("the " + task.key + " runner stopped: " + runner.last + " (" + p.getInventory().getAmount(itemId) + "/" + n + ")");
             return St.RUNNING;
         }
@@ -618,7 +637,7 @@ final class QuestSteps {
             if (s == St.FAILED) return fail("walk to " + shop + ": " + m.last);
             long price = (long) Math.max(1, MarketBrain.value(itemId)) * need;
             if (!Ledger.Wallet.pay(p, price)) { if (Watchdog.FAIL_ON && Watchdog.traced(p)) try { Failures.Econ.fee(p, "quest-shop", price); } catch (Throwable ignored) { } return fail("can't afford " + need + " x " + itemId + " (" + price + " gp) at " + shop); } // batch 19c (design 4.7): logged only
-            QuestRunner.makeRoom(p, need);
+            QuestRunner.makeRoom(p, QuestRunner.slotsFor(p, itemId, need)); // p46: a stackable needs one slot at most
             for (int i = 0; i < need; i++) p.getInventory().add(new Item(itemId));
             r.log("  bought " + need + " x " + MarketBrain.name(itemId) + " at " + shop + " for " + price + " gp");
             return St.DONE;
@@ -651,12 +670,12 @@ final class QuestSteps {
                 int inBank = p.getBank().getAmount(itemId);
                 if (inBank > 0) {
                     int take = Math.min(need, inBank);
-                    QuestRunner.makeRoom(p, take);
+                    QuestRunner.makeRoom(p, QuestRunner.slotsFor(p, itemId, take)); // p46: coins and other stackables need one slot at most
                     if (p.getBank().remove(new Item(itemId, take))) { if (!p.getInventory().add(new Item(itemId, take))) p.getBank().add(new Item(itemId, take)); else r.log("  took " + take + " x " + MarketBrain.name(itemId) + " from the bank"); }
                     need = n - have(p);
                 }
                 if (need > 0 && fromStock && !Boolean.getBoolean("quests.noStock") && MarketBrain.stockOf(itemId) > 0) {
-                    QuestRunner.makeRoom(p, need);
+                    QuestRunner.makeRoom(p, QuestRunner.slotsFor(p, itemId, need)); // p46
                     int got = Ledger.consume(p, itemId, Math.min(need, p.getInventory().freeSlots()), "quest");
                     if (got > 0) { p.getInventory().add(new Item(itemId, got)); r.log("  bought " + got + " x " + MarketBrain.name(itemId) + " from bot stock"); }
                 }

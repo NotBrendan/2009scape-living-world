@@ -89,7 +89,14 @@ final class QuestPrinceAliRescue {
     static boolean keyMade(Player p) { return stage(p) >= 30; }
     static boolean printed(Player p) { return has(PRINT, 1).test(p) || keyMade(p); }
     static boolean pasted(Player p) { return has(PASTE, 1).test(p) || freed(p); }
-    static boolean wigged(Player p) { return has(YELLOW_WIG, 1).test(p) || freed(p); }
+    /**
+     * p45 (-Dquest.princeAliFix, default off): the blonde wig is made by item-on-item, not collected, so it was not in the
+     * runner's keep set, and the 5- and 15-coin Collects call makeRoom(p, coins), which banked it. The prince then said the
+     * disguise was incomplete (soak logs: "give the prince the disguise FAILED ... box 65") and the quest was parked. With
+     * the fix a banked wig counts as made, and the dye step is a Collect of the wig (kept, and taken back out of the bank).
+     */
+    static final boolean FIX = Boolean.getBoolean("quest.princeAliFix");
+    static boolean wigged(Player p) { return has(YELLOW_WIG, 1).test(p) || FIX && p.getBank().getAmount(YELLOW_WIG) > 0 || freed(p); }
     static boolean drunk(Player p) { return attr(p, "guard-drunk") || stage(p) >= 50; }
     static boolean keliGone(Player p) { return attrInt(p, "keli-gone") > GameWorld.getTicks(); }
     /** The jail's outer room (walls from the cache map: west edge of x 3121, east edge of 3130, north edge of y 3246, the cell wall on y 3243). */
@@ -299,7 +306,10 @@ final class QuestPrinceAliRescue {
                 .then(nedDoor())
                 .then(new QuestSteps.Talk("ask Ned to knit a wig", new int[]{NED}, "I'd like to talk about Prince Ali Rescue.", 1, 2, 1).until(has(WIG, 1)))
                 .done(p -> has(WIG, 1).test(p) || wigged(p)));
-        s.step(mix("dye the wig blonde", YELLOW_DYE, WIG, YELLOW_WIG, false).done(QuestPrinceAliRescue::wigged));
+        if (FIX) s.step(new QuestSteps.Collect("get the blonde wig", YELLOW_WIG, 1) // p45: kept by makeRoom, and out of the bank if it went there
+                .then(mix("dye the wig blonde", YELLOW_DYE, WIG, YELLOW_WIG, false))
+                .done(p -> has(YELLOW_WIG, 1).test(p) || freed(p)));
+        else s.step(mix("dye the wig blonde", YELLOW_DYE, WIG, YELLOW_WIG, false).done(QuestPrinceAliRescue::wigged));
         s.step(new QuestSteps.Collect("get a print of Keli's key", PRINT, 1)
                 .then(new QuestSteps.Walk("walk to the jail door", JAIL_DOOR_OUT, 2).done(p -> inJail(p) || p.getLocation().getZ() == 0 && p.getLocation().getDistance(JAIL_DOOR_OUT) <= 2))
                 .then(jailDoor("into Keli's jail", true))
@@ -334,7 +344,9 @@ final class QuestPrinceAliRescue {
         s.step(new QuestSteps.Custom("let the cell door's walk finish", 20, null, r -> r.bot.getLocks().isInteractionLocked() || r.bot.getLocks().isMovementLocked() || r.bot.getWalkingQueue().isMoving() ? QuestSteps.St.RUNNING : QuestSteps.St.DONE)
                 .done(QuestPrinceAliRescue::freed));
         s.step(new QuestSteps.Talk("give the prince the disguise", new int[]{PRINCE}).until(QuestPrinceAliRescue::freed).done(QuestPrinceAliRescue::freed));
-        s.step(new QuestSteps.Interact("out of the cell", new int[]{PRISON_DOOR}, null, "Open", PRISON_DOOR_AT, 3, false).until(p -> !inCell(p)).done(p -> !inCell(p)));
+        QuestSteps.Interact outCell = new QuestSteps.Interact("out of the cell", new int[]{PRISON_DOOR}, null, "Open", PRISON_DOOR_AT, 3, false);
+        if (FIX) outCell.viaHandler(); // P72: live "Open on [2881] didn't do it (5 clicks)" from 3121,3241 / 3122,3243: PrinceAliRescuePlugin's own handler after two clicks
+        s.step(outCell.until(p -> !inCell(p)).done(p -> !inCell(p)));
         s.step(jailDoor("out of the jail", false).done(p -> stageAtLeast(Q, 100).test(p) || !inJail(p) && !inCell(p)));
 
         // ---- Al Kharid: the reward

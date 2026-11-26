@@ -42,6 +42,12 @@ public final class Ledger {
     static volatile long PAID, GIVEN, CREDITED;
     /** Audit E-12: the part of GIVEN that was sale credits and owed coins handed over (not new money). GIVEN keeps its old meaning for the page. */
     static volatile long GIVEN_CREDITS;
+    /** econ3 L4 (-Dclerk.fix2): the lifetime counters are added to under one lock (game thread and MarketBrain timer both write them); flag off = the plain += of before. Counters only, no coins. */
+    static final Object CNT = new Object();
+    static void addPaid(long d) { addPaid(d, CLERK_FIX2); }
+    static void addPaid(long d, boolean fix) { if (fix) { synchronized (CNT) { PAID += d; } } else PAID += d; }
+    static void addCredited(long d) { if (CLERK_FIX2) { synchronized (CNT) { CREDITED += d; } } else CREDITED += d; }
+    static void addGiven(long d, boolean sale) { if (CLERK_FIX2) { synchronized (CNT) { GIVEN += d; if (sale) GIVEN_CREDITS += d; } } else { GIVEN += d; if (sale) GIVEN_CREDITS += d; } }
     /** Quest rewards (QuestRunner): coins the server paid bots for finishing quests, and the guide value of the items it handed them. Not "given": the quest paid. */
     static volatile long QUEST_PAID, QUEST_ITEMS;
 
@@ -179,7 +185,7 @@ public final class Ledger {
     public static synchronized int consume(Player buyer, int id, int n, String reason) {
         assertThread("Ledger.consume", QUEUE_THREADS); // audit 10-23 batch14 item4
         if (n <= 0) return 0;
-        int unit = MarketBrain.value(id);
+        int unit = price(id);
         if (buyer != null) {
             long cost = (long) unit * n;
             long have = Wallet.coins(buyer);
@@ -205,7 +211,7 @@ public final class Ledger {
         Deque<Entry> q = QUEUES.get(id);
         if (q == null || n <= 0) return 0;
         n = Math.min(n, waiting(supplier, id));
-        int unit = MarketBrain.value(id);
+        int unit = price(id);
         if (n <= 0 || Wallet.coins(buyer) < (long) unit * n) return 0;
         int taken = MarketBrain.takeFromStock(id, n);
         if (taken <= 0) return 0;
@@ -325,18 +331,21 @@ public final class Ledger {
     }
 
     /** P37: one lot bought under its own short Ledger hold, re-checked there (still queued, still eligible), so the game thread's supply/consume wait one lot, not a whole round. Returns the coins credited, 0 when skipped. */
-    private static long clerkBuy(int id, Entry e, Deque<Entry> q, int pct, int max, boolean head) {
+    private static long clerkBuy(int id, Entry e, Deque<Entry> q, int pct, int max, boolean head) { return clerkBuy(id, e, q, pct, max, head, Long.MAX_VALUE); }
+    /** econ1: room = gp left in the round budget (Long.MAX_VALUE = no limit, as before); the lot is cut to fit it. */
+    private static long clerkBuy(int id, Entry e, Deque<Entry> q, int pct, int max, boolean head, long room) {
         synchronized (Ledger.class) {
             if (e.qty <= 0 || "world".equals(e.supplier) || QUEUES.get(id) != q || (head ? q.peekFirst() != e : !q.contains(e))) return 0;
-            int unit = MarketBrain.value(id) * pct / 100;
+            int unit = price(id) * pct / 100;
             int take = Math.min(e.qty, max);
+            if (room != Long.MAX_VALUE && unit > 0) take = (int) Math.min((long) take, Math.max(0, room) / unit); // econ1 bandBudget
             long cost = (long) unit * take;
-            if (cost <= 0 || clerkPaidToday + cost > CLERK_DAILY_CAP) return 0;
-            int taken = MarketBrain.takeFromStock(id, take);
+            if (cost <= 0 || clerkPaidToday + cost > dailyCap()) return 0;
+            int taken = TEST_STOCK != null ? TEST_STOCK.applyAsInt(id, take) : MarketBrain.takeFromStock(id, take);
             if (taken <= 0) return 0;
             e.qty -= taken; if (e.qty <= 0) q.remove(e);
             long coins = (long) unit * taken;
-            if (!Wallet.credit(e.supplier, coins)) return 0;
+            if (!Wallet.credit(e.supplier, coins)) { if (!CLERK_FIX2) return 0; Wallet.OFFLINE.merge(e.supplier.toLowerCase(Locale.ROOT), coins, Long::sum); } // econ2 L1: the lot is gone, so the coins are kept as owed (as collect() does), not dropped
             EARNED.merge(e.supplier, coins, Long::sum); clerkPaidToday += coins; return coins;
         }
     }
@@ -346,10 +355,140 @@ public final class Ledger {
         try { Thread.sleep(5); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
     }
 
-    public static String clerkRound() { // P37: no longer synchronized for the whole round; the Ledger monitor is held per lot (fable-pulse-1634)
+    /** P85 (cash audit 11-16): the boot clerk round ran 2 min after a restart while the bots were still offline (Wallet.coinsOf = 0),
+     *  so every supplier looked broke and 70-220k gp was paid out per restart. -Dclerk.bootGrace=true skips rounds for 30 min after boot. */
+    static boolean CLERK_BOOT_GRACE = Boolean.getBoolean("clerk.bootGrace");
+    /** P85: optional cap on gp paid in one clerk round (0 = no cap, default). */
+    static final long CLERK_ROUND_CAP = Long.getLong("clerk.roundCap", 0L);
+    static volatile int CLERK_GRACE_SKIPS;
+    /** money-logs: -Dclerk.kindLog=true adds a "[Clerk] kinds" line (gp paid per kind) after each round. Log only. */
+    static final boolean CLERK_KIND_LOG = Boolean.getBoolean("clerk.kindLog");
+
+    // ---------------- econ1 (the design notes): three independent flags, all default off ----------------
+    /** econ1 H1+H2: each payout is added to the round's cached wealth and the poverty line re-tested; a bailout is sized to reach 1,000 gp; offline suppliers are not "broke". */
+    static boolean CLERK_WEALTH_LIVE = Boolean.getBoolean("clerk.wealthLive");
+    /** econ1 H3: the round budget comes from the fleet total against the band; the daily cap follows the fleet size. */
+    static boolean CLERK_BAND_BUDGET = Boolean.getBoolean("clerk.bandBudget");
+    /** econ1: the flood guard's cut is an export, paid to the lot owners at EXPORT_PCT of botRef (MarketBrain.hourly -> trimPaid). */
+    static boolean EXPORT_PAY = Boolean.getBoolean("market.exportPay");
+    /** econ2 (the design notes M1, M2, M4, L1, L2, L3): one flag, default off = today's behaviour. */
+    static final boolean CLERK_FIX2 = Boolean.getBoolean("clerk.fix2");
+    /** econ2 M1: the unit price bots and the clerk use: botRef (guide held within 70-150% of the base) with the flag, the raw guide without. */
+    static int price(int id) { return CLERK_FIX2 ? MarketBrain.botRef(id) : MarketBrain.value(id); }
+    /** econ2 M2 (pure): bot stock is never listed under the item's base price. */
+    static int floorPick(int ref, Integer base, boolean fix) { return fix && base != null ? Math.max(ref, base) : ref; }
+    /** econ3 M2 buy side: what a bot pays a player is counted from min(botRef, base), so 90-100% of it stays under the 110% x max(botRef, base) bot stock sells at. Pure. */
+    static int ceilPick(int ref, Integer base, boolean fix) { return fix && base != null && base > 0 ? Math.min(ref, base) : ref; }
+    /** econ3 M3: everything highAlch takes is there and affordable (at the price consume charges) before the day's alch allowance is booked. Pure. */
+    static boolean alchReady(int n, int bowStock, int natStock, int fireStock, boolean fireStaff, long coins, long bowP, long natP, long fireP) {
+        if (n <= 0 || bowStock < n || natStock < n) return false;
+        if (!fireStaff && fireStock < 5 * n) return false;
+        return coins >= (bowP + natP + (fireStaff ? 0 : 5 * fireP)) * n;
+    }
+    /** econ3 (log only): with -Dclerk.kindLog the "[Clerk] kinds" line is printed every round, all-zero rounds too, so a silent hour shows. */
+    static boolean kindsDue(boolean kindLog, int items, boolean econ) { return kindLog; }
+    /** econ2 L3 (pure): coins a teleport still costs after law/air runes bought from the Exchange. */
+    static long teleRest(int law, int air, long lawP, long airP) { return (law >= 1 ? 0 : lawP) + (3L - Math.min(3, Math.max(0, air))) * airP; }
+    /** econ2 L7 (log only, with -Dclerk.kindLog): coins minted by brokeShopSale / sellOld since the last "[Clerk] mint" line. */
+    static final java.util.concurrent.atomic.AtomicLong MINT_SHOP = new java.util.concurrent.atomic.AtomicLong(), MINT_OLD = new java.util.concurrent.atomic.AtomicLong();
+    static int mintKind(String method) { return method == null ? 0 : method.contains("brokeShopSale") ? 1 : method.contains("sellOld") ? 2 : 0; }
+    static void noteMint(String method, long coins) { int k = mintKind(method); if (k == 1) MINT_SHOP.addAndGet(coins); else if (k == 2) MINT_OLD.addAndGet(coins); }
+    static String mintLine() { long s = MINT_SHOP.getAndSet(0), o = MINT_OLD.getAndSet(0); return s == 0 && o == 0 ? null : "[Clerk] mint brokeShopSale=" + s + " sellOld=" + o; }
+    static final long BAND_MID = Math.max(1L, Long.getLong("clerk.bandMid", 300_000L)), BAND_TOP = Math.max(1L, Long.getLong("clerk.bandTop", 350_000L));
+    static final long BAND_ROUND_MAX = Math.max(0L, Long.getLong("clerk.bandRoundMax", 60_000L)), EXPORT_ROUND_MAX = Math.max(0L, Long.getLong("market.exportRoundMax", 30_000L));
+    static final int BAND_FLEET = Math.max(1, Integer.getInteger("clerk.bandFleet", 102)), BAND_DIV = Math.max(1, Integer.getInteger("clerk.bandDiv", 2));
+    static final int BAND_DAY_ROUNDS = Math.max(1, Integer.getInteger("clerk.bandDayRounds", 12)), EXPORT_PCT = Math.max(0, Math.min(100, Integer.getInteger("market.exportPct", 50)));
+    static final long BAIL_LINE = 1_000, FUND_LINE = 5_000;
+
+    /** Pure: a gp figure quoted for the reference fleet (102 bots), scaled to the bots counted now. */
+    static long scaled(long atFleet, int bots, int fleet) { return bots <= 0 || fleet <= 0 ? 0 : atFleet * bots / fleet; }
+    /** Pure: clerk gp allowed this round = clamp((mid - total) / div, 0, roundMax), mid and roundMax scaled to the fleet; 0 at or above mid, 0 with no bots. */
+    static long bandBudget(long total, int bots, long mid, long roundMax, int fleet, int div) {
+        if (total < 0 || bots <= 0) return 0;
+        long gap = scaled(mid, bots, fleet) - total;
+        return gap <= 0 ? 0 : Math.max(0, Math.min(gap / Math.max(1, div), scaled(roundMax, bots, fleet)));
+    }
+    /** Pure: export (trim) gp allowed this round = min(exportMax scaled, top scaled - total), never under 0: export pays up to the band top, not past it. */
+    static long exportBudget(long total, int bots, long top, long exportMax, int fleet) {
+        if (total < 0 || bots <= 0) return 0;
+        return Math.max(0, Math.min(scaled(top, bots, fleet) - total, scaled(exportMax, bots, fleet)));
+    }
+    /** Pure: the day's cap under bandBudget = dayRounds full round budgets (720,000 at 102 bots, against 2,000,000 fixed). */
+    static long bandDailyCap(int bots, long roundMax, int fleet, int dayRounds) { return scaled(roundMax, bots, fleet) * Math.max(1, dayRounds); }
+    /** Pure: units of a lot to buy so a supplier holding wealth reaches line (rounded up, at least 1, at most max); 0 when already at the line. */
+    static int unitsToLine(long wealth, long line, int unit, int max) {
+        if (wealth >= line || max <= 0) return 0;
+        if (unit <= 0) return max;
+        return (int) Math.max(1, Math.min(max, (line - wealth + unit - 1) / unit));
+    }
+    /** Pure: the bailout re-test. A supplier at or over the line is no longer poor (fund uses line + 1: its test is "over 5,000"). */
+    static boolean isPoor(long wealth, long line) { return wealth < line; }
+
+    // ---------------- boot1 (the design notes): one flag, default off = today's behaviour ----------------
+    /** boot1 (-Dclerk.bootFair): MarketBrain's hourly (flood-guard trim, then the clerk round) runs once per wall-clock hour slot (minute -Dclerk.bootFairMinute, default :35) instead of at boot + 2 min and every 60 min after it. A slot that falls in the boot grace, or while the fleet is still logging in, is run late as soon as both are over: not dropped, and never twice. CoinWatch.total() also counts the profiles not spawned yet. */
+    static boolean BOOT_FAIR = Boolean.getBoolean("clerk.bootFair");
+    static final int FAIR_MINUTE = Math.max(0, Math.min(59, Integer.getInteger("clerk.bootFairMinute", 35))), FAIR_FLEET_PCT = 90;
+    static final long HOUR_MS = 3_600_000L, GRACE_MS = 30 * 60_000L, FAIR_HOLD_MAX_MS = 45 * 60_000L;
+    /** boot1: when the last hourly ran: this boot's own, and before the first one the ledger file's last save (set in load(): the hourly saves right after its clerk round, so a slot older than the file has been served). Reads the file time only: no save-format change. */
+    static volatile long fairLastRound;
+    /** boot1 test seams (TestEcon1 offline only; null in a world): the stock take and the online lookup of clerkRound. */
+    static java.util.function.IntBinaryOperator TEST_STOCK; static java.util.Set<String> TEST_ONLINE;
+    /** Pure: the start (ms) of the newest hour slot at or before now. */
+    static long slotAt(long now, int minute) { long off = minute * 60_000L; return Math.floorDiv(now - off, HOUR_MS) * HOUR_MS + off; }
+    /** Pure: null = run the hourly now; else why not: "served" (this slot's hourly has run), "grace" (under 30 min after boot: P85), "fleet" (under 90% of the roster in, at most 45 min after boot). */
+    static String fairHold(long now, long boot, long last, int minute, int in, int roster) {
+        if (last >= slotAt(now, minute)) return "served";
+        if (now - boot < GRACE_MS) return "grace";
+        if ((long) in * 100L < (long) FAIR_FLEET_PCT * roster && now - boot < FAIR_HOLD_MAX_MS) return "fleet";
+        return null;
+    }
+
+    static volatile long econTotal = -1, econTrimBudget, econTrimPaid; static volatile int econBots;
+    static long dailyCap() { return CLERK_BAND_BUDGET && econBots > 0 ? bandDailyCap(econBots, BAND_ROUND_MAX, BAND_FLEET, BAND_DAY_ROUNDS) : CLERK_DAILY_CAP; }
+    /** MarketBrain's hourly, before the flood-guard trims: one fleet-total read for the trims and the clerk round that follows. No-op with both flags off. */
+    static void econRoundStart() { econRoundStart(null); }
+    /** boot1 seam: fleet = {total gp, bots} (TestEcon1); null = CoinWatch.total(), as before. */
+    static void econRoundStart(long[] fleet) {
+        econTrimPaid = 0; econTrimBudget = 0; econTotal = -1; econBots = 0;
+        if (!CLERK_BAND_BUDGET && !EXPORT_PAY) return;
+        synchronized (Ledger.class) { String today = new java.text.SimpleDateFormat("yyyyMMdd").format(new java.util.Date()); if (!today.equals(clerkDay)) { clerkDay = today; clerkPaidToday = 0; } } // bug hunt C F1: the day rolls over before the trims, not only in clerkRound after them
+        try { long[] t = fleet != null ? fleet : CoinWatch.total(); econTotal = t[0]; econBots = (int) t[1]; } catch (Throwable t) { System.out.println("[Clerk] econ1: fleet total unreadable, nothing paid this round: " + t); }
+        if (EXPORT_PAY) econTrimBudget = exportBudget(econTotal, econBots, BAND_TOP, EXPORT_ROUND_MAX, BAND_FLEET);
+    }
+    /** econ1 (-Dmarket.exportPay): Ledger.trim with pay. The same lots lose the units (newest first); a bot owner gets EXPORT_PCT of botRef a unit while the round's export budget and the day's cap last. Returns gp paid. */
+    public static long trimPaid(int id, int n) {
+        assertThread("Ledger.trim", QUEUE_THREADS);
+        int unit = 0; try { unit = (int) ((long) MarketBrain.botRef(id) * EXPORT_PCT / 100); } catch (Throwable ignored) { }
+        long paid = 0;
+        synchronized (Ledger.class) {
+            Deque<Entry> q = QUEUES.get(id);
+            int left = n;
+            while (q != null && left > 0 && !q.isEmpty()) {
+                Entry e = q.peekLast();
+                int cut = Math.min(e.qty, left);
+                if (e.qty <= left) q.pollLast(); else e.qty -= left;
+                left -= Math.max(0, cut);
+                if (unit <= 0 || cut <= 0 || "world".equals(e.supplier)) continue;
+                long room = Math.min(econTrimBudget - econTrimPaid, dailyCap() - clerkPaidToday);
+                long coins = unit * Math.min((long) cut, Math.max(0, room) / unit);
+                if (coins <= 0 || !Wallet.credit(e.supplier, coins)) continue;
+                EARNED.merge(e.supplier, coins, Long::sum); clerkPaidToday += coins; econTrimPaid += coins; paid += coins;
+            }
+        }
+        return paid;
+    }
+
+    public static String clerkRound() { return clerkRound(System.currentTimeMillis()); }
+    /** boot1 seam: the round with its clock passed in (TestEcon1); the same code. */
+    static String clerkRound(long now) { // P37: no longer synchronized for the whole round; the Ledger monitor is held per lot (fable-pulse-1634)
         assertThread("Ledger.clerkRound", CLERK_THREADS); // audit 10-23 batch14 item4
-        long now = System.currentTimeMillis();
-        int items = 0, starters = 0, lots = 0; long paid = 0;
+        if (CLERK_BOOT_GRACE && now - bootAt < 30 * 60_000L) { CLERK_GRACE_SKIPS++; return "clerk fund: boot grace, round skipped (" + (now - bootAt) / 60_000L + " min after boot) (P85)"; }
+        int items = 0, starters = 0, lots = 0; long paid = 0, kFund = 0, kBail = 0, kExport = 0;
+        final boolean live = CLERK_WEALTH_LIVE, band = CLERK_BAND_BUDGET; // econ1
+        final long bandCap = band ? Math.max(0, bandBudget(econTotal, econBots, BAND_MID, BAND_ROUND_MAX, BAND_FLEET, BAND_DIV) - econTrimPaid) : 0; // export pay already spent part of the round
+        final long cap = band ? (CLERK_ROUND_CAP > 0 ? Math.min(CLERK_ROUND_CAP, bandCap) : bandCap) : CLERK_ROUND_CAP; final boolean capOn = band || CLERK_ROUND_CAP > 0;
+        final Map<String, Boolean> on = new HashMap<>(); // econ1 H2: one online lookup per supplier per round
+        java.util.function.Predicate<String> offline = n -> !on.computeIfAbsent(n.toLowerCase(Locale.ROOT), k -> TEST_ONLINE != null ? TEST_ONLINE.contains(k) : Wallet.findOnline(n) != null);
         final Map<String, Long> wealth = new HashMap<>(); // audit E-8: one player scan per supplier per round, not one per lot and per sort comparison
         java.util.function.ToLongFunction<String> coinsOf = n -> wealth.computeIfAbsent(n.toLowerCase(Locale.ROOT), k -> Wallet.coinsOf(n));
         List<Object[]> heads = new ArrayList<>(); // {itemId, entry, deque}
@@ -364,9 +503,11 @@ public final class Ledger {
         }
         for (Object[] o : heads) {
             Entry e = (Entry) o[1]; @SuppressWarnings("unchecked") Deque<Entry> q = (Deque<Entry>) o[2];
+            if (capOn && paid >= cap) break; // P85
+            if (live && offline.test(e.supplier)) continue; // econ1 H2: its coins are in its saved profile, not zero
             if (coinsOf.applyAsLong(e.supplier) > 5_000) continue; // not broke: wait for a real buyer
-            long coins = clerkBuy((Integer) o[0], e, q, CLERK_DISCOUNT_PERCENT, 100, true);
-            if (coins > 0) { paid += coins; items++; clerkBreather(++lots); }
+            long coins = clerkBuy((Integer) o[0], e, q, CLERK_DISCOUNT_PERCENT, 100, true, band ? cap - paid : Long.MAX_VALUE);
+            if (coins > 0) { paid += coins; kFund += coins; items++; clerkBreather(++lots); if (live) wealth.merge(e.supplier.toLowerCase(Locale.ROOT), coins, Long::sum); }
         }
         // Starter bailout: a newcomer's lot waits behind the old suppliers' queues for ever. Lots of suppliers with
         // under 1,000 gp, anywhere in the queue, are bought after 6 h (same 60% price, same daily cap, poorest first).
@@ -376,12 +517,16 @@ public final class Ledger {
                 for (Entry e : qe.getValue())
                     if (!"world".equals(e.supplier) && now - e.time >= STARTER_AFTER_MS && e.qty > 0) poor.add(new Object[]{qe.getKey(), e, qe.getValue(), e.supplier});
         }
+        if (live) poor.removeIf(o -> offline.test((String) o[3])); // econ1 H2
         poor.removeIf(o -> coinsOf.applyAsLong((String) o[3]) >= 1_000);
         poor.sort((a, b) -> Long.compare(coinsOf.applyAsLong((String) a[3]), coinsOf.applyAsLong((String) b[3])));
         for (Object[] o : poor) {
+            if (capOn && paid >= cap) break; // P85
             @SuppressWarnings("unchecked") Deque<Entry> q = (Deque<Entry>) o[2];
-            long coins = clerkBuy((Integer) o[0], (Entry) o[1], q, CLERK_DISCOUNT_PERCENT, 100, false);
-            if (coins > 0) { paid += coins; items++; starters++; clerkBreather(++lots); }
+            int bailMax = 100;
+            if (live) { long w = coinsOf.applyAsLong((String) o[3]); if (!isPoor(w, BAIL_LINE)) continue; bailMax = unitsToLine(w, BAIL_LINE, price((Integer) o[0]) * CLERK_DISCOUNT_PERCENT / 100, 100); } // econ1 H1: top up to the line, not a liquidation
+            long coins = clerkBuy((Integer) o[0], (Entry) o[1], q, CLERK_DISCOUNT_PERCENT, bailMax, false, band ? cap - paid : Long.MAX_VALUE);
+            if (coins > 0) { paid += coins; kBail += coins; items++; starters++; clerkBreather(++lots); if (live) wealth.merge(((String) o[3]).toLowerCase(Locale.ROOT), coins, Long::sum); }
         }
         if (starters > 0) System.out.println("[Economy] starter bailout: bought " + starters + " lots from newcomers under 1,000 gp");
         // Wholesale export (owner notes #2): an artisan's finished goods unsold after 12 h are shipped to the other
@@ -395,14 +540,18 @@ public final class Ledger {
         }
         for (Object[] o : stale) {
             Entry e = (Entry) o[1]; @SuppressWarnings("unchecked") Deque<Entry> q = (Deque<Entry>) o[2];
+            if (capOn && paid >= cap) break; // P85: export counts against the round cap too
             if (!Artisans.TRADE_OF.containsKey(e.supplier.toLowerCase(Locale.ROOT))) continue; // renamed since the scan
-            long coins = clerkBuy((Integer) o[0], e, q, 90, 200, false);
-            if (coins > 0) { paid += coins; items++; exported++; clerkBreather(++lots); }
+            long coins = clerkBuy((Integer) o[0], e, q, 90, 200, false, band ? cap - paid : Long.MAX_VALUE);
+            if (coins > 0) { paid += coins; kExport += coins; items++; exported++; clerkBreather(++lots); }
         }
         synchronized (Ledger.class) { for (Deque<Entry> q : QUEUES.values()) q.removeIf(x -> x.qty <= 0); }
         if (exported > 0) System.out.println("[Economy] export: shipped " + exported + " stale artisan lots abroad at 90% of guide");
         long today; synchronized (Ledger.class) { today = clerkPaidToday; }
-        return items == 0 ? null : "clerk fund bought " + items + " stale lots for " + String.format("%,d", paid) + " gp (today " + String.format("%,d", today) + " of " + String.format("%,d", CLERK_DAILY_CAP) + ")";
+        final boolean econ = live || band || EXPORT_PAY;
+        if (kindsDue(CLERK_KIND_LOG, items, econ)) System.out.println("[Clerk] kinds fund=" + kFund + " bailout=" + kBail + " export=" + kExport + (econ ? " trim=" + econTrimPaid + " budget=" + (band ? cap : -1) + " total=" + econTotal + " bots=" + econBots + " flags=" + (live ? "W" : "-") + (band ? "B" : "-") + (EXPORT_PAY ? "X" : "-") : "")); // money-logs: log only; econ1 fields at the end
+        if (CLERK_KIND_LOG) { String m = mintLine(); if (m != null) System.out.println(m); } // econ2 L7: log only
+        return items == 0 ? null : "clerk fund bought " + items + " stale lots for " + String.format("%,d", paid) + " gp (today " + String.format("%,d", today) + " of " + String.format("%,d", dailyCap()) + ")";
     }
 
     public static synchronized String summary() {
@@ -440,6 +589,7 @@ public final class Ledger {
     public static synchronized void load() {
         File f = file();
         if (!f.exists()) return;
+        fairLastRound = f.lastModified(); // boot1: read only
         try {
             JSONObject root = (JSONObject) new JSONParser().parse(new String(java.nio.file.Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8)); // read and closed, so a bad file can be moved aside (E-9)
             JSONObject items = (JSONObject) root.get("items");
@@ -532,15 +682,39 @@ public final class Ledger {
 
         /** Batch 22-1: with the reason (the paid-action kind CoinWatch counts fleet-wide, and the gp log line's text). */
         public static boolean payTeleport(Player p, String why) {
-            long cost = Math.max(100, MarketBrain.value(563) + 3L * MarketBrain.value(556));
+            if (!Seed.ON || p == null || !p.isArtificial()) return payTeleport0(p, why); // W8 capFix scenario: flags off = the call below unchanged
+            if (W6Magic.TELE) { long[] tb = Scen.teleBefore(p); boolean tok = payTeleport0(p, why); Scen.teleAfter(p, tb, tok, why); return tok; } // w14 scen tele: the cast (or its fare fallback) judged on its own rules
+            long c0 = coins(p), want = price(563) + 3L * price(556);
+            boolean ok = payTeleport0(p, why);
+            Scen.fare(p, why, ok, c0 - coins(p), want);
+            return ok;
+        }
+
+        static boolean payTeleport0(Player p, String why) {
+            if (W6Magic.TELE && W6MagicCast.castTele(p, why)) return true; // W6 Magic (-Dbots.magic.tele): a real cast from its own runes (shortfall bought from bot stock); else the fare below
+            final long lawP = price(563), airP = price(556); // econ2 M1/L3: the same unit price consume() charges
+            long cost = Math.max(100, lawP + 3L * airP);
             if (p == null || coins(p) < cost) return false;
+            if (CLERK_FIX2) return payTeleport2(p, why, cost, lawP, airP);
             CoinWatch.paid(p, why); // batch 22 task 4: the coin-drain alarm's paid-action count (bug 296); never throws
             int law = MarketBrain.stockOf(563) >= 1 ? consume(p, 563, 1, "teleport") : 0;
             int air = MarketBrain.stockOf(556) >= 3 ? consume(p, 556, 3, "teleport") : 0;
-            long rest = (law >= 1 ? 0 : MarketBrain.value(563)) + (3L - air) * MarketBrain.value(556);
+            long rest = (law >= 1 ? 0 : lawP) + (3L - air) * airP;
             if (p.isArtificial()) System.out.println("[Paid] " + p.getUsername() + " " + why + " " + cost + " gp (runes " + (law >= 1 && air >= 3 ? "from the Exchange" : "partly in coins " + Math.max(1, rest)) + ")"); // batch 22-1: every paid teleport has a gp line
             if (law >= 1 && air >= 3) return true;
             return pay(p, Math.max(1, rest));
+        }
+
+        /** econ2 L3 (-Dclerk.fix2): the paid-action count and the gp line only once the teleport is really paid for. */
+        static boolean payTeleport2(Player p, String why, long cost, long lawP, long airP) {
+            int law = MarketBrain.stockOf(563) >= 1 ? consume(p, 563, 1, "teleport") : 0;
+            int air = MarketBrain.stockOf(556) >= 3 ? consume(p, 556, 3, "teleport") : 0;
+            long rest = teleRest(law, air, lawP, airP);
+            boolean runes = law >= 1 && air >= 3;
+            if (!runes && !pay(p, Math.max(1, rest))) { System.out.println("[Paid] " + p.getUsername() + " " + why + " FAILED: " + Math.max(1, rest) + " gp short after runes (law " + law + " air " + air + ")"); return false; }
+            CoinWatch.paid(p, why);
+            if (p.isArtificial()) System.out.println("[Paid] " + p.getUsername() + " " + why + " " + cost + " gp (runes " + (runes ? "from the Exchange" : "partly in coins " + Math.max(1, rest)) + ")");
+            return true;
         }
 
         /** Takes coins from the bank first, then the inventory. Returns false (and takes nothing) if short. */
@@ -548,13 +722,20 @@ public final class Ledger {
             assertThread("Wallet.pay", BANK_THREADS); // audit 10-23 batch14 item4
             if (amount <= 0) return true;
             if (coins(p) < amount) return false;
-            PAID += amount;
+            addPaid(amount);
             try {
                 long fromBank = Math.min(amount, p.getBank().getAmount(COINS));
                 boolean okB = true, okI = true; // batch 19c §4.7: the removes' results, read for pay-failed-with-coins only (pay still returns as before)
                 if (fromBank > 0) okB = p.getBank().remove(new Item(COINS, (int) fromBank));
                 long rest = amount - fromBank;
                 if (rest > 0) okI = p.getInventory().remove(new Item(COINS, (int) rest));
+                if (CLERK_FIX2 && (!okB || !okI)) { // econ2 L2: no effect without pay: put back the half that did leave, undo PAID, report false
+                    if (okB && fromBank > 0) p.getBank().add(new Item(COINS, (int) fromBank));
+                    if (okI && rest > 0) p.getInventory().add(new Item(COINS, (int) rest));
+                    addPaid(-amount);
+                    try { Failures.Econ.payFailed(p, amount, coins(p), (okB ? "" : "bank remove false ") + (okI ? "" : "pack remove false") + " (undone)"); } catch (Throwable ignored) { }
+                    return false;
+                }
                 try { Failures.walletMove(p, -amount); if (!okB || !okI) Failures.Econ.payFailed(p, amount, amount, (okB ? "" : "bank remove false ") + (okI ? "" : "pack remove false")); } catch (Throwable ignored) { } // batch 19c §4.1 / §4.7
                 return true;
             } catch (Throwable t) { try { Failures.Econ.payFailed(p, amount, coins(p), String.valueOf(t)); } catch (Throwable ignored) { } return false; } // batch 19c §4.7: had the coins, the remove threw
@@ -562,7 +743,7 @@ public final class Ledger {
 
         public static boolean credit(String name, long amount) {
             if (amount <= 0) return false;
-            CREDITED += amount;
+            addCredited(amount);
             Player p = findOnline(name);
             if (p == null || !p.isActive() || SHUTTING_DOWN) { OFFLINE.merge(name.toLowerCase(Locale.ROOT), amount, Long::sum); return true; } // audit 10-23 X-7: at shutdown a queued pulse never runs; owed coins are saved and collected at the next login
             if (!p.isArtificial()) { final Player hp = p; final long amt = amount; core.game.world.GameWorld.getPulser().submit(new core.game.system.task.Pulse(1) { @Override public boolean pulse() { try { hp.sendMessage("<col=0b5e1f>Your Exchange lot sold for " + String.format("%,d", amt) + " gp; it's in your bank."); } catch (Throwable ignored) { } return true; } }); }
@@ -575,7 +756,11 @@ public final class Ledger {
             return give(p, amount, true);
         }
 
-        public static boolean give(Player p, long amount) { return give(p, amount, false); }
+        public static boolean give(Player p, long amount) {
+            boolean ok = give(p, amount, false);
+            if (ok && CLERK_KIND_LOG) try { noteMint(StackWalker.getInstance().walk(f -> f.skip(1).findFirst()).map(StackWalker.StackFrame::getMethodName).orElse(null), amount); } catch (Throwable ignored) { } // econ2 L7: log only
+            return ok;
+        }
 
         /** audit 10-23 X-7: set first thing at shutdown; credits then go to OFFLINE (saved with the ledger) instead of pulses that never run. */
         public static volatile boolean SHUTTING_DOWN;
@@ -584,8 +769,7 @@ public final class Ledger {
         static boolean give(Player p, long amount, boolean sale) {
             assertThread("Wallet.give", BANK_THREADS); // audit 10-23 batch14 item4
             if (amount <= 0) return false;
-            GIVEN += amount;
-            if (sale) GIVEN_CREDITS += amount;
+            addGiven(amount, sale);
             try {
                 int cur = p.getBank().getAmount(COINS);
                 long over = Math.max(0, (long) cur + amount - Integer.MAX_VALUE); // audit E-12: what doesn't fit the stack was silently lost; now kept as owed
@@ -596,7 +780,7 @@ public final class Ledger {
                 if (cur > 0) p.getBank().add(new Item(COINS, cur));
                 try { Failures.bankFull(p, "wallet.give", COINS); } catch (Throwable ignored) { } // batch 19c §4.5 bank-full
                 if (p.getInventory().add(new Item(COINS, (int) Math.min(Integer.MAX_VALUE, amount - over)))) { try { Failures.walletMove(p, amount - over); } catch (Throwable ignored) { } return owe(p, over); } // batch 19c §4.1
-                GIVEN -= amount; if (sale) GIVEN_CREDITS -= amount; // audit 10-23 X-8: nothing was handed over
+                addGiven(-amount, sale); // audit 10-23 X-8: nothing was handed over
                 try { Failures.Econ.itemLost(p, COINS, amount, "wallet.give", "-"); } catch (Throwable ignored) { } // batch 19c §4.2 item-lost-on-handover
                 return false;
             } catch (Throwable t) { return false; }

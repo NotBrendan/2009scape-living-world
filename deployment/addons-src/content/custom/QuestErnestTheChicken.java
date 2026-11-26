@@ -49,6 +49,108 @@ final class QuestErnestTheChicken {
     static final int GAUGE = 271, FISH_FOOD = 272, POISON = 273, POISONED = 274, KEY = 275, TUBE = 276, OIL = 277, SPADE = 952;
     static final int FOUNTAIN = 153, COMPOST = 152, LADDER_DOWN = 133, LADDER_UP = 32015, SECRET_LEVER = 160;
     static final int[] BOOKCASES = {155, 156};
+    /**
+     * P50 -Dquest.ernestFix (default off). Step 12 started in the north room and "Search" on the fountain 153 (3087,3334,
+     * outside) is a bare click: the engine path from inside the manor can't get out (the front doors 134/135 won't open
+     * from y >= 3354, the east door is off any straight line) and stopped at 3104,3354, the library's south-east corner,
+     * five clicks, FAILED "short of Pressure gauge" (34 of 107 live quest failures in 24 h, no successes). With the flag
+     * the bot first walks to the fountain with the nav walker (approach, as the compost heap already does), which
+     * keeps the front doors as walls and goes out by the east door.
+     */
+    static final boolean FIX = Boolean.getBoolean("quest.ernestFix");
+    /**
+     * W28 -Dquest.ernestManor (default off). Farm pairs x4/x4b/q3*: 241 "stuck" lines in the manor, four tiles.
+     * (1) In from outside: the planner keeps the front doors 134/135 as walls (NavGrid.ONE_WAY: they don't open from
+     * inside), so a walk to the hall or the staircase went round by the east door 35146 (3123,3361): ~75 tiles and four
+     * doors, moving away from the goal, so the Mover's 40-tick stall rule sidestepped it and then paid a teleport
+     * (stuck at 3123,3361 / 3111,3370; 126 walks up to Oddenstein: 4 under 150 ticks, 71 over 400). From outside
+     * (y < 3354) the doors do open and DraynorManorPlugin walks the bot through: with the flag the bot goes in that way.
+     * (2) Fish food (3108,3356,1): its room x 3107-3110, y 3354-3361 opens only east (door 3110,3358, open by default)
+     * into the south-east room, whose one door 11470 at 3116,3361,1 is shut. The engine path stopped in the dead-end west
+     * room at 3106,3356,1, 10 tiles from that door (openDoorToward looks 6): 62 of 65 pick-ups took 300+ ticks and a
+     * teleport. With the flag the bot walks to the landing north of that door, opens it, and goes on from there.
+     * Each new leg is soft: if it fails or runs out of time it logs and the train-73 walk after it takes over.
+     * Off: the step list, logs and walks are the train-73 ones.
+     */
+    static final boolean MANOR_FIX = Boolean.getBoolean("quest.ernestManor");
+    static final int[] FRONT_DOORS = {134, 135};
+    static final Location FRONT_OUT = Location.create(3109, 3352, 0);     // outside, a step south of the front doors (3108-3109,3353)
+    static final Location LANDING_UP = Location.create(3116, 3363, 1);    // first floor, north of door 3116,3361
+    static final Location SOUTH_UP = Location.create(3115, 3359, 1);      // first floor, the south-east room behind it
+    /** The building's ground-floor footprint: the rooms x 3091-3119, y 3354-3373 and the east wing x 3120-3126, y 3354-3360. */
+    static boolean inManor(Location l) {
+        return l.getY() >= 3354 && l.getY() <= 3373 && (l.getX() >= 3091 && l.getX() <= 3119 || l.getX() >= 3120 && l.getX() <= 3126 && l.getY() <= 3360);
+    }
+    /** On the surface and not in the building: the front doors open from here. */
+    static boolean outside(Location l) { return l.getZ() == 0 && l.getY() < 6400 && !inManor(l); }
+    /** First floor: the fish food room and the south-east room (x 3107-3118, y 3354-3361), south of door 3116,3361. */
+    static boolean inSouthUp(Location l) { return l.getZ() == 1 && l.getX() >= 3107 && l.getX() <= 3118 && l.getY() >= 3354 && l.getY() <= 3361; }
+
+    /** W28: from outside, walk to the front doors and open one (the handler walks the bot in). Never fails: if the doors don't take it in, the next step walks as before. */
+    static QuestSteps.Step frontDoors() {
+        final QuestSteps.Mover m = new QuestSteps.Mover();
+        final int[] n = {0, 0, 0}; // clicks, ticks to wait, ticks with no door found
+        return new QuestSteps.Custom("in by the front doors", QuestSteps.WALK_LIMIT, r -> { m.reset(FRONT_OUT, 1); n[0] = 0; n[1] = 0; n[2] = 0; }, r -> {
+            Player p = r.bot;
+            if (!outside(p.getLocation())) return QuestSteps.St.DONE;
+            if (p.getLocation().getDistance(FRONT_OUT) > 1.5) {
+                QuestSteps.St w = m.tick(p);
+                if (w == QuestSteps.St.FAILED) { r.log("  front doors: walk stopped at " + p.getLocation() + " (" + m.last + "), going round"); return QuestSteps.St.DONE; }
+                if (w == QuestSteps.St.RUNNING) return QuestSteps.St.RUNNING;
+            }
+            if (n[1] > 0) { n[1]--; return QuestSteps.St.RUNNING; }
+            if (p.getWalkingQueue().isMoving()) return QuestSteps.St.RUNNING;
+            Scenery d = QuestSteps.findScenery(p, FRONT_OUT, 2, FRONT_DOORS, null, "Open");
+            if (d == null && ++n[2] <= 10) { n[1] = 1; return QuestSteps.St.RUNNING; } // mid-swing after a click
+            if (d == null || n[0] >= 6 || !QuestSteps.click(p, d, "Open", IntType.SCENERY)) { r.log("  front doors: not through at " + p.getLocation() + " after " + n[0] + " clicks, going round"); return QuestSteps.St.DONE; }
+            n[0]++; n[1] = 6; n[2] = 0;
+            return QuestSteps.St.RUNNING;
+        }).done(p -> !outside(p.getLocation()));
+    }
+
+    /** W28: steps run one after another as one numbered quest step (a step whose checkpoint already holds is skipped). */
+    static QuestSteps.Step chain(String name, QuestSteps.Step... steps) {
+        final int[] i = {0, 0}; // index, begun
+        final QuestSteps.Step[] self = {null};
+        self[0] = new QuestSteps.Custom(name, QuestSteps.WALK_LIMIT, r -> { i[0] = 0; i[1] = 0; }, r -> {
+            while (i[0] < steps.length) {
+                QuestSteps.Step s = steps[i[0]];
+                if (i[1] == 0) {
+                    if (r != null && s.checkpoint(r.bot)) { i[0]++; continue; }
+                    s.begin(r); i[1] = 1; if (r != null) r.log("  - " + s.name);
+                }
+                QuestSteps.St st = s.tick(r);
+                if (st == QuestSteps.St.RUNNING) return QuestSteps.St.RUNNING;
+                s.end(r); i[1] = 0;
+                if (st == QuestSteps.St.FAILED) { self[0].failure = s.name + ": " + s.failure + (s.trace() != null ? " [" + s.trace() + "]" : ""); return QuestSteps.St.FAILED; } // the runner's FAILED line says which leg and why
+                i[0]++;
+                return QuestSteps.St.RUNNING;
+            }
+            return QuestSteps.St.DONE;
+        });
+        return self[0];
+    }
+
+    /**
+     * W28 review change 1: a new leg that must not cost the step. The leg runs as itself, but a failure, or cap ticks
+     * without finishing, is logged and counts as done, so the train-73 walk that follows it still gets its try (in a
+     * Collect a failed sub-step drops the whole plan; in chain() it fails the step).
+     */
+    static QuestSteps.Step soft(QuestSteps.Step s, int cap) {
+        final int[] n = {0};
+        QuestSteps.Step w = new QuestSteps.Custom(s.name, cap + 1, r -> { n[0] = 0; s.begin(r); }, r -> {
+            QuestSteps.St st = s.tick(r);
+            if (st == QuestSteps.St.RUNNING && ++n[0] >= cap) st = s.fail("time limit " + cap + " ticks");
+            if (st != QuestSteps.St.FAILED) return st;
+            s.end(r);
+            if (r != null) r.log("  " + s.name + " failed: " + s.failure + (s.trace() != null ? " [" + s.trace() + "]" : "") + ", walking on as before");
+            return QuestSteps.St.DONE;
+        });
+        w.done = s.done;
+        return w;
+    }
+    static final int SOFT_CAP = 300; // ticks a new leg may take before the old walk takes over
+
     static final Location VERONICA_AT = Location.create(3110, 3328, 0);   // just south of her, outside the manor gate
     static final Location ODDENSTEIN_AT = Location.create(3109, 3366, 2);
     static final Location MANOR = Location.create(3105, 3355, 0);         // the middle of the grounds: fountain and compost heap are looked up within 30 of it
@@ -421,12 +523,19 @@ final class QuestErnestTheChicken {
         s.step(new QuestSteps.Walk("walk to Veronica outside the manor", VERONICA_AT, 3).done(p -> stageAtLeast(Q, 10).test(p) || p.getLocation().getZ() == 0 && p.getLocation().getDistance(VERONICA_AT) <= 3));
         s.step(new QuestSteps.Talk("offer Veronica help", new int[]{VERONICA}, 1).until(stageAtLeast(Q, 10)).done(stageAtLeast(Q, 10)));
 
-        s.step(new QuestSteps.Walk("up to Professor Oddenstein", ODDENSTEIN_AT, 3).done(p -> stageAtLeast(Q, 20).test(p) || p.getLocation().getZ() == 2 && p.getLocation().getDistance(ODDENSTEIN_AT) <= 3));
+        java.util.function.Predicate<Player> upThere = p -> stageAtLeast(Q, 20).test(p) || p.getLocation().getZ() == 2 && p.getLocation().getDistance(ODDENSTEIN_AT) <= 3;
+        if (MANOR_FIX) s.step(chain("up to Professor Oddenstein", frontDoors(), soft(intoRoom("into the staircase room", STAIR_IN, p -> !inHall(p)), SOFT_CAP), // W28: in by the front doors, through the hall door, then the stairs
+                new QuestSteps.Walk("up the stairs to Oddenstein", ODDENSTEIN_AT, 3)).done(upThere));
+        else s.step(new QuestSteps.Walk("up to Professor Oddenstein", ODDENSTEIN_AT, 3).done(upThere));
         s.step(new QuestSteps.Talk("ask Oddenstein about Ernest", new int[]{ODDENSTEIN}, 1).until(stageAtLeast(Q, 20)).done(stageAtLeast(Q, 20)));
 
         // inside first: the fish food, the poison and the spade, then the basement; one trip outside for the fountain and the compost heap
+        QuestSteps.Collect food = new QuestSteps.Collect("get the fish food", FISH_FOOD, 1);
+        if (MANOR_FIX) food // W28: round by the landing and through door 3116,3361,1; skipped when already south of it
+                .then(soft(new QuestSteps.Walk("walk to the landing door upstairs", LANDING_UP, 1).done(p -> inSouthUp(p.getLocation()) || p.getLocation().getZ() == 1 && p.getLocation().getDistance(LANDING_UP) <= 1), SOFT_CAP))
+                .then(soft(intoRoom("through the landing door", SOUTH_UP, p -> inSouthUp(p.getLocation())), SOFT_CAP));
         s.step(new QuestSteps.Collect("get poisoned fish food", POISONED, 1)
-                .then(new QuestSteps.Collect("get the fish food", FISH_FOOD, 1)
+                .then(food
                         .then(new QuestSteps.Walk("walk to the fish food upstairs", FISH_FOOD_AT, 1))
                         .then(new QuestSteps.PickUp("pick up the fish food", FISH_FOOD, FISH_FOOD_AT))
                         .done(has(FISH_FOOD, 1)))
@@ -442,7 +551,9 @@ final class QuestErnestTheChicken {
                 .buy(new QuestSteps.Buy("buy a spade", SPADE, 1, "Sarah's Farming Shop", Location.create(3039, 3292, 0)))
                 .done(p -> has(SPADE, 1).test(p) || has(KEY, 1).test(p) || tubed(p)));
 
-        s.step(new QuestSteps.Collect("get the oil can", OIL, 1)
+        QuestSteps.Collect oil = new QuestSteps.Collect("get the oil can", OIL, 1);
+        if (MANOR_FIX) oil.then(frontDoors());
+        s.step(oil
                 .then(intoRoom("walk into the manor hall", HALL_IN, p -> libraryRank(p) >= 1))
                 .then(intoRoom("into the staircase room", STAIR_IN, p -> libraryRank(p) >= 2))
                 .then(intoRoom("into the north room", NORTH_IN, p -> libraryRank(p) >= 3))
@@ -459,7 +570,9 @@ final class QuestErnestTheChicken {
         s.step(intoRoom("out of the library to the corridor", CORRIDOR_IN, p -> !inLibrary(p))); // its only door is on the north side
         s.step(intoRoom("on into the north room", NORTH_IN, p -> !inLibrary(p) && !inCorridor(p)));
 
-        s.step(new QuestSteps.Collect("get the pressure gauge", GAUGE, 1)
+        QuestSteps.Collect gauge = new QuestSteps.Collect("get the pressure gauge", GAUGE, 1);
+        if (FIX) gauge.then(approach("walk out to the fountain", new int[]{FOUNTAIN}, MANOR, 30)); // P50: Interact only clicks, so from inside the manor the engine path stopped in the library corner
+        s.step(gauge
                 .then(new QuestSteps.UseOn("pour the poisoned food in the fountain", POISONED, new int[]{FOUNTAIN}, null, IntType.SCENERY, MANOR, 30).until(p -> attr(p, "piranhas-killed")).done(p -> attr(p, "piranhas-killed")))
                 .then(new QuestSteps.Interact("search the fountain", new int[]{FOUNTAIN}, null, "Search", MANOR, 30, false).picks().until(has(GAUGE, 1)))
                 .done(QuestErnestTheChicken::gauged));
@@ -467,7 +580,9 @@ final class QuestErnestTheChicken {
                 .then(approach("walk to the compost heap", new int[]{COMPOST}, MANOR, 30))
                 .then(new QuestSteps.Interact("dig through the compost heap", new int[]{COMPOST}, null, "Search", MANOR, 30, false).picks().until(has(KEY, 1)))
                 .done(p -> has(KEY, 1).test(p) || tubed(p)));
-        s.step(new QuestSteps.Collect("get the rubber tube", TUBE, 1)
+        QuestSteps.Collect tube = new QuestSteps.Collect("get the rubber tube", TUBE, 1);
+        if (MANOR_FIX) tube.then(frontDoors());
+        s.step(tube
                 .then(intoRoom("walk into the manor hall", HALL_IN, p -> inHall(p) || inStairRoom(p) || inTubeRoom(p) || inNorthRoom(p) || inCorridor(p) || inWestRooms(p)))
                 .then(intoRoom("into the staircase room", STAIR_IN, p -> inStairRoom(p) || inTubeRoom(p)))
                 .then(intoRoom("unlock door 131 into the tube room", TUBE_ROOM_IN, QuestErnestTheChicken::inTubeRoom))

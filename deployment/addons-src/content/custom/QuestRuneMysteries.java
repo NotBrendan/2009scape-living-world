@@ -1,6 +1,7 @@
 package content.custom;
 
 import core.game.node.entity.player.Player;
+import core.game.node.item.Item;
 import core.game.world.map.Location;
 
 import static content.custom.QuestScript.stageAtLeast;
@@ -37,21 +38,49 @@ final class QuestRuneMysteries {
     /** Sedridor's lines are long: more than the usual 150 ticks. */
     static QuestSteps.Talk longTalk(QuestSteps.Talk t) { t.limitTicks = 450; return t; }
 
+    /**
+     * P77 (quest-only step fix, no flag). Live 11-13..15: bots that come back to the quest find the item the next talk needs
+     * in the BANK (AFK trips bank the pack between runs). Sedridor at stage 10 (SedridorDialogue 51) removes 1438 from the
+     * pack and ends the chat when it isn't there: "dialogue ended with picks left [1]". Aubury at stage 30 checks the pack for
+     * 290 ("I kind of don't have it with me", stage stays 30): "dialogue ended but its condition didn't hold". Sedridor at
+     * 50 checks the pack for 291. A banked copy goes back into the pack (a slot made first). With none anywhere the
+     * server's own lost-item lines take over (Sedridor re-sends the package at 30, Aubury has duplicate notes at 50).
+     */
+    static QuestSteps.Step fetch(String name, int from, int to, int id) {
+        return new QuestSteps.Custom(name, 2, null, r -> {
+            Player p = r.bot;
+            if (p.getInventory().getAmount(id) > 0) return QuestSteps.St.DONE;
+            if (p.getBank().getAmount(id) < 1) { r.log("  " + id + " is in neither pack nor bank"); return QuestSteps.St.DONE; }
+            if (p.getInventory().freeSlots() < 1) QuestRunner.makeRoom(p, 1);
+            if (p.getInventory().freeSlots() > 0 && p.getBank().remove(new Item(id, 1))) {
+                if (p.getInventory().add(new Item(id, 1))) r.log("  took " + id + " back out of the bank");
+                else p.getBank().add(new Item(id, 1));
+            }
+            return QuestSteps.St.DONE;
+        }).done(p -> !(stageAtLeast(Q, from).test(p) && !stageAtLeast(Q, to).test(p)) || p.getInventory().getAmount(id) > 0);
+    }
+
+    /** P77: his rune-essence speech after the notes (SedridorDialogue 900..930+) ran past 450 ticks in 2 of 24 trial runs. */
+    static QuestSteps.Talk notesTalk(QuestSteps.Talk t) { t.limitTicks = 900; return t; }
+
     static QuestScript build() {
         QuestScript s = QuestScript.of(Q, "runemysteries", "Rune Mysteries").startAt(3212, 3220, 1).minutes(35).items(TALISMAN).xp(0).unlock(150);
         s.step(new QuestSteps.Walk("walk up to Duke Horacio", DUKE_AT, 3).done(p -> stageAtLeast(Q, 10).test(p) || p.getLocation().getZ() == 1 && p.getLocation().getDistance(DUKE_AT) <= 3));
         s.step(longTalk(new QuestSteps.Talk("ask the Duke for a quest", new int[]{DUKE}, 1, 1)).until(stageAtLeast(Q, 10)).done(stageAtLeast(Q, 10)));
 
         s.step(new QuestSteps.Walk("walk down to Sedridor", SEDRIDOR_AT, 3).done(p -> stageAtLeast(Q, 30).test(p) || underground(p) && p.getLocation().getDistance(SEDRIDOR_AT) <= 3));
+        s.step(fetch("find the talisman", 10, 20, TALISMAN));
         s.step(longTalk(new QuestSteps.Talk("give Sedridor the talisman", new int[]{SEDRIDOR}).picks(p -> stageAtLeast(Q, 20).test(p) ? new Object[]{1} : new Object[]{3, 1, 1}))
                 .until(stageAtLeast(Q, 30)).done(stageAtLeast(Q, 30)));
 
-        s.step(new QuestSteps.Walk("walk to Aubury's rune shop", AUBURY_AT, 3).done(p -> stageAtLeast(Q, 40).test(p) || p.getLocation().getZ() == 0 && !underground(p) && p.getLocation().getDistance(AUBURY_AT) <= 3));
+        s.step(new QuestSteps.Walk("walk to Aubury's rune shop", AUBURY_AT, 3).done(p -> stageAtLeast(Q, 50).test(p) || p.getLocation().getZ() == 0 && !underground(p) && p.getLocation().getDistance(AUBURY_AT) <= 3));
+        s.step(fetch("find the package", 30, 40, PACKAGE));
         s.step(longTalk(new QuestSteps.Talk("give Aubury the package", new int[]{AUBURY}, 3)).until(stageAtLeast(Q, 40)).done(stageAtLeast(Q, 40)));
         s.step(longTalk(new QuestSteps.Talk("get Aubury's notes", new int[]{AUBURY})).until(stageAtLeast(Q, 50)).done(stageAtLeast(Q, 50)));
 
         s.step(new QuestSteps.Walk("back down to Sedridor", SEDRIDOR_AT, 3).done(p -> stageAtLeast(Q, 100).test(p) || underground(p) && p.getLocation().getDistance(SEDRIDOR_AT) <= 3));
-        s.step(longTalk(new QuestSteps.Talk("give Sedridor the notes", new int[]{SEDRIDOR})).until(stageAtLeast(Q, 100)).done(stageAtLeast(Q, 100)));
+        s.step(fetch("find the notes", 50, 100, NOTES));
+        s.step(notesTalk(new QuestSteps.Talk("give Sedridor the notes", new int[]{SEDRIDOR})).until(stageAtLeast(Q, 100)).done(stageAtLeast(Q, 100)));
         s.step(new QuestSteps.WaitStage("wait for the reward", 100, 30));
         s.exit(new QuestSteps.Walk("back out of the tower", TOWER_OUT, 3).done(p -> !underground(p) && p.getLocation().getZ() == 0 && p.getLocation().getDistance(TOWER_OUT) <= 3));
         return s;

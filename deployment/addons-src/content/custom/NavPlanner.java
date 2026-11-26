@@ -270,6 +270,23 @@ public final class NavPlanner {
 
     static int regionSize(int reg) { int[] t = regionTiles; return t == null || reg <= 0 || reg >= t.length ? 0 : t[reg]; }
 
+    /**
+     * P42: are a plan's two ends (as plan0 takes them: ends(), the start moved out of a pocket) in different connected regions?
+     * The corridor search then fails by design: another landmass or a gated area (Karamja, Crandor, Morytania, the desert past
+     * the Shantay Pass, Lunar Isle) that a bot reaches by boat, teleport or a quest or pass gate. False when either end has no
+     * region, the graph is not built, or a rebuild overlapped the check (gen), so an unsure answer still counts as a failure.
+     */
+    static boolean crossRegion(Location from, Location to) {
+        try {
+            final int g0 = gen;
+            if (!built || from == null || to == null || from.getZ() != 0 || to.getZ() != 0) return false;
+            Location[] e = ends(from, to);
+            if (e == null) return false;
+            int a = regionAt(e[0]), b = regionAt(e[1]);
+            return a != 0 && b != 0 && a != b && g0 == gen && built;
+        } catch (Throwable t) { return false; }
+    }
+
     /** batch 20 B2: the nearest standable tile within SNAP_R whose region is not a pocket, or null. */
     static Location nearBig(Location l) {
         for (int r = 1; r <= SNAP_R; r++) for (int dx = -r; dx <= r; dx++) for (int dy = -r; dy <= r; dy++) {

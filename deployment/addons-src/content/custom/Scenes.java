@@ -65,6 +65,11 @@ public final class Scenes implements StartupListener {
         String si = System.getProperty("scenes.standin");
         if (si != null && !si.trim().isEmpty()) { Companions.TEST_HUMANS.add(si.trim().toLowerCase(Locale.ROOT)); log("stand-in " + si.trim() + " counts as a player (trials and soaks only)"); }
         if (offFile().exists()) { stop(OFF_FILE + " present"); return; }
+        if (Greet.STORE.enabled) { // P41 D4: -Dscenes.greetPersist; off = no file read or written
+            LinkedHashMap<String, Long> m = Greet.STORE.load(System.currentTimeMillis());
+            synchronized (Greet.GREETED) { for (Map.Entry<String, Long> e : m.entrySet()) Greet.GREETED.putIfAbsent(e.getKey(), e.getValue()); }
+            log("greet store: " + Greet.STORE.loaded + " loaded, " + Greet.STORE.expired + " expired, file " + Greet.STORE.file.getPath());
+        }
         GameWorld.getPulser().submit(new Pulse(TICKS) {
             @Override public boolean pulse() {
                 if (Scenes.stopped) return true; // qualified: Pulse has its own stop()
@@ -72,7 +77,7 @@ public final class Scenes implements StartupListener {
                 return false;
             }
         });
-        log("on: greet " + PARTS[GREET] + ", crews " + PARTS[CREWS] + ", show " + PARTS[SHOW] + " (one a hub every " + Show.minutes() + " min), rescueTalk " + PARTS[RESCUE]);
+        log("on: greet " + PARTS[GREET] + ", crews " + PARTS[CREWS] + ", show " + PARTS[SHOW] + " (one a hub every " + Show.minutes() + " min), rescueTalk " + PARTS[RESCUE] + (RescueTalk.EAR ? " (rescueEar on)" : ""));
     }
 
     static void stop(String why) { stopped = true; stopWhy = why; log("off: " + why); }
@@ -131,11 +136,52 @@ public final class Scenes implements StartupListener {
         static final int RANGE = 10, LOCAL_RANGE = 6, NEAR_HUB = 40, ESCORT_MS = 45_000;
         static final Map<String, Long> NEXT = new ConcurrentHashMap<>();        // bot -> next greet (10 min)
         static final Map<String, Long> LOCAL_CHECK = new ConcurrentHashMap<>(); // town local -> next look (3 s; its tick runs every tick)
-        static final LinkedHashMap<String, Long> GREETED = new LinkedHashMap<>(); // player -> greeted until (6 h); synchronized on itself; memory only
+        static final LinkedHashMap<String, Long> GREETED = new LinkedHashMap<>(); // player -> greeted until (6 h); synchronized on itself; memory only unless -Dscenes.greetPersist
+        static final GreetStore STORE = new GreetStore(new File(ServerConstants.DATA_PATH, "scenes-greeted.txt"), GreetStore.flag()); // P41 D4, default off
         static final Map<String, Escort> ESCORTS = new ConcurrentHashMap<>();   // bot -> its escort (one per bot, one per hub)
         static volatile long GLOBAL_NEXT;
         static volatile boolean testNoLocal;                                    // trials: the local stays out of the adventurer cases
         static volatile String lastWhy, lastGreet; static volatile int lastTiles = -1; static volatile Player lastBot; static volatile Location lastAt; // trials
+        // P57 -Dscenes.greetGuard (default OFF; phase3-design.md section 7): busy lists, inCombat, death/rescue/logout resets, no long walk-back, no names in logs
+        static final boolean GUARD = "true".equalsIgnoreCase(System.getProperty("scenes.greetGuard", "false"));
+        static final long SALT = new java.security.SecureRandom().nextLong(); // per boot: player# tags are stable within a boot only
+        static volatile String lastWalkback; static volatile int drops, walkbackSkips; // trials
+
+        /** P57: true while this bot walks a newcomer (guard on only; off = always false, today's behaviour). */
+        static boolean escorting(Player bot) { return GUARD && bot != null && ESCORTS.containsKey(key(bot)); }
+
+        /** P57: end an escort now (death, logout, rescue): no goodbye line, no walk-back. No-op with the guard off. */
+        static void drop(Player bot, String why) {
+            if (!GUARD || bot == null) return;
+            if (ESCORTS.remove(key(bot)) == null) return;
+            escortEnds++; drops++; lastWhy = why; lastBot = bot;
+            log("escort " + bot.getUsername() + " end " + why + " dropped");
+        }
+
+        /** P57: a log tag for a human (or stand-in) that never names them: player# + 6 hex of SHA-1(per-boot salt + key). */
+        static String redact(Player p) { return p == null ? "player#null" : redact(key(p)); }
+        static String redact(String k) {
+            try {
+                byte[] h = java.security.MessageDigest.getInstance("SHA-1").digest((SALT + ":" + k).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                return String.format("player#%02x%02x%02x", h[0], h[1], h[2]);
+            } catch (Throwable t) { return "player#" + Integer.toHexString((Long.hashCode(SALT) ^ k.hashCode()) & 0xffffff); }
+        }
+
+        /** P57: guard reasons checked ahead of the old ones (null = none). */
+        static String guardWhy(SmartAdventurers.Brain br) {
+            if (!GUARD) return null;
+            Player b = br.bot;
+            if (b.getAttribute("state:death", false)) return "death";
+            if (b.inCombat()) return "combat";
+            if (br.companion != null || QuestRunner.active(b) || Deals.involved(b) || PlayerTrades.SESSIONS.containsKey(b)) return "busy";
+            return null;
+        }
+
+        /** P57: no walk-back after far/z/death/busy or from over 20 tiles out (a rescue teleport). */
+        static boolean skipWalkBack(String why, Location at, Location greetAt) {
+            if (!GUARD) return false;
+            return "far".equals(why) || "z".equals(why) || "death".equals(why) || "busy".equals(why) || at == null || greetAt == null || dist(at, greetAt) > 20;
+        }
 
         static final class Escort {
             final Player player; final Location from, greetAt; final long since; final String hub;
@@ -177,6 +223,7 @@ public final class Scenes implements StartupListener {
             if (GLOBAL_NEXT > now || NEXT.getOrDefault(key(bot), 0L) > now) return null;
             Location bl = bot.getLocation();
             if (bl == null || bl.getZ() != 0) return null;
+            if (GUARD && bot.inCombat()) return null; // P57 A3
             SceneHubs hubs = SceneHubs.get();
             SceneHubs.Spot near = hubs.nearest(bl);
             if (near == null || !HUB.equals(near.name) || dist(bl, near.at) > NEAR_HUB + range) return null; // cheap: most bots are nowhere near
@@ -188,6 +235,7 @@ public final class Scenes implements StartupListener {
                 SceneHubs.Spot at = hubs.nearest(p.getLocation());
                 if (at == null || !HUB.equals(at.name) || dist(p.getLocation(), at.at) > NEAR_HUB) continue;
                 if (greetedUntil(key(p)) > now) continue;
+                if (GUARD && p.inCombat()) continue; // P57 A3: no hello to a player mid-fight
                 best = p; bd = d;
             }
             return best;
@@ -195,14 +243,17 @@ public final class Scenes implements StartupListener {
 
         static void greet(Player bot, Player p, long now, boolean local) {
             String pk = key(p);
+            LinkedHashMap<String, Long> snap = null;
             synchronized (GREETED) {
                 GREETED.remove(pk); GREETED.put(pk, now + coolMs());
                 while (GREETED.size() > 500) { Iterator<String> it = GREETED.keySet().iterator(); it.next(); it.remove(); } // oldest first
+                if (STORE.enabled) snap = new LinkedHashMap<>(GREETED);
             }
+            if (snap != null) STORE.save(snap); // P41 D4: outside the lock; never throws
             NEXT.put(key(bot), now + 10 * 60_000L);
             GLOBAL_NEXT = now + 60_000L; // set before the first line: two bots in one tick can't both greet
             if (local) localGreets++; else greets++;
-            log(lastGreet = (local ? "greet-local " : "greet ") + bot.getUsername() + " -> " + p.getUsername() + " at " + HUB + " d=" + (int) Math.round(dist(bot.getLocation(), p.getLocation())));
+            log(lastGreet = (local ? "greet-local " : "greet ") + bot.getUsername() + " -> " + (GUARD ? redact(p) : p.getUsername()) + " at " + HUB + " d=" + (int) Math.round(dist(bot.getLocation(), p.getLocation())));
             try { bot.face(p); } catch (Throwable ignored) { }
             Spectacle.anim(bot, 863); // the wave
             say(GREET, bot, pick(GREET_LINES));
@@ -235,7 +286,9 @@ public final class Scenes implements StartupListener {
                         long t = System.currentTimeMillis();
                         Location pl = p.getLocation(), bl = br.bot.getLocation();
                         double moved = dist(pl, e.from), gap = dist(pl, bl);
-                        String why = !Scenes.on(GREET) ? "off" : !br.bot.isActive() ? "bot" : !p.isActive() ? "gone" : br.runner != null ? "job"
+                        if (GUARD && !ESCORTS.containsKey(key(br.bot))) return true; // P57: dropped (death/rescue/logout) - the pulse just stops
+                        String gw = Greet.guardWhy(br);
+                        String why = gw != null ? gw : !Scenes.on(GREET) ? "off" : !br.bot.isActive() ? "bot" : !p.isActive() ? "gone" : br.runner != null ? "job"
                                 : pl.getZ() != bl.getZ() || pl.getZ() != e.from.getZ() ? "z" : moved >= 10 ? "dist10" : gap > 10 ? "far" : t - e.since > ESCORT_MS ? "timeout" : null;
                         if (why == null) { if (gap > 2) { br.bot.face(p); br.scriptAPI.randomWalkTo(pl, 1); } return false; }
                         Greet.end(br, e, why, moved, t);
@@ -252,9 +305,13 @@ public final class Scenes implements StartupListener {
             lastWhy = why; lastTiles = tiles; lastBot = br.bot; lastAt = e.greetAt;
             log("escort " + br.bot.getUsername() + " end " + why + " tiles=" + tiles + " secs=" + secs);
             if (!br.bot.isActive()) return;
-            if (!"off".equals(why)) say(GREET, br.bot, pick(BYE));
+            if (!"off".equals(why) && !(GUARD && "death".equals(why))) say(GREET, br.bot, pick(BYE));
             try { br.bot.face(null); } catch (Throwable ignored) { }
-            if (br.runner == null) {
+            if (br.runner == null && skipWalkBack(why, br.bot.getLocation(), e.greetAt)) { // P57 A5
+                walkbackSkips++; lastWalkback = why;
+                log("walkback skipped " + why);
+                br.idleUntil += t - e.since;
+            } else if (br.runner == null) {
                 try { br.scriptAPI.randomWalkTo(e.greetAt, 2); } catch (Throwable ignored) { } // back toward where it stood (not awaited)
                 br.idleUntil += t - e.since; // the break is not shortened by the walk
             }
@@ -371,15 +428,26 @@ public final class Scenes implements StartupListener {
     static final String[] LANDING = {"Where did you spring from, %s?", "%s, you look like you walked into a wall for ten minutes.",
             "Bad path, %s? There's a lot of those.", "Welcome back, %s. Next time take the road.", "Teleported in, did you, %s? Fair enough.",
             "You're white as a sheet, %s."};
+    // P66 -Dscenes.rescueEar (C1): in-world lines only - nothing about getting stuck, paths, walls or teleports
+    static final String[] STUCK_EAR = {"Was that %s? Gone in a puff of smoke.", "Where's %s off to in such a hurry?", "Saw that, %s. Not judging.",
+            "%s must have remembered something at the bank.", "Off you go then, %s.", "Bye, %s. Mind how you go."};
+    static final String[] LANDING_EAR = {"Where'd you come from, %s?", "Afternoon, %s.", "Welcome back, %s.", "Busy day, %s?",
+            "You're white as a sheet, %s.", "There you are, %s. Thought we'd lost you."};
 
     static final class RescueTalk {
         static final Map<String, Long> NEXT_TALK = new ConcurrentHashMap<>(), NEXT_ABOUT = new ConcurrentHashMap<>(); // witness 10 min, rescued bot 30 min
         static volatile long GLOBAL_NEXT; // 2 min server wide
         static volatile String lastTalk; // trials
+        // P66 -Dscenes.rescueEar (default OFF; phase3-design.md section 3): C1 in-world lines, C2 busy witness skipped, C3 a human hears at most 2 remarks per 30 min
+        static final boolean EAR = "true".equalsIgnoreCase(System.getProperty("scenes.rescueEar", "false"));
+        static final int HEAR_RANGE = 20, HEAR_CAP = 2; static final long HEAR_WINDOW = 30 * 60_000L;
+        static final Map<String, long[]> HEARD = new ConcurrentHashMap<>(); // human key -> times of the last HEAR_CAP remarks heard (memory only, never logged)
+        static volatile int heldBusy, heldCap, heldHuman; static volatile long nextHeldLog; static volatile String lastHeld; // trials + status
 
         /** From Watchdog.rescue after its log line (one line): at most one remark per rescue, from a bot that saw it. */
         static void saw(Player rescued, Location stuckAt, Location landedAt, long now) {
             if (!on(RESCUE) || rescued == null || !rescued.isArtificial()) return; // a real player is never the subject
+            if (EAR && Companions.human(rescued)) { held("human", now); return; } // P66: a stand-in counts as a human: never the subject
             if (GLOBAL_NEXT > now || NEXT_ABOUT.getOrDefault(key(rescued), 0L) > now) return;
             try {
                 Player atStuck = witness(rescued, stuckAt, 12, now), atLand = witness(rescued, landedAt, 8, now);
@@ -388,25 +456,99 @@ public final class Scenes implements StartupListener {
                 if (hs || (!hl && atStuck != null)) { w = atStuck; landing = false; } // the scene someone sees; else the stuck spot
                 else if (hl) { w = atLand; landing = true; }
                 else return;
+                int heard = 0, most = 0;
+                if (EAR) {
+                    java.util.List<String> ears = hearers(w, now);
+                    if (ears == null) { held("cap", now); return; }
+                    for (String k : ears) note(k, now);
+                    heard = ears.size(); for (String k : ears) most = Math.max(most, count(k, now));
+                }
                 NEXT_TALK.put(key(w), now + 10 * 60_000L); NEXT_ABOUT.put(key(rescued), now + 30 * 60_000L); GLOBAL_NEXT = now + 2 * 60_000L;
                 rescueTalks++;
-                log(lastTalk = "rescue-talk " + w.getUsername() + " about " + rescued.getUsername() + " at " + (landing ? "landing" : "stuck"));
+                log(lastTalk = "rescue-talk " + w.getUsername() + " about " + rescued.getUsername() + " at " + (landing ? "landing" : "stuck") + (EAR ? " heard=" + heard + " most=" + most : ""));
                 LINES[RESCUE]++;
-                BotChat.speak(w, null, Collections.singletonList(String.format(pick(landing ? LANDING : STUCK), rescued.getUsername())), 4); // after the rescued bot's own line
+                String[] set = EAR ? (landing ? LANDING_EAR : STUCK_EAR) : (landing ? LANDING : STUCK);
+                BotChat.speak(w, null, Collections.singletonList(String.format(pick(set), rescued.getUsername())), 4); // after the rescued bot's own line
             } catch (Throwable ignored) { }
         }
 
-        /** The nearest other bot (not a stand-in) within range of the spot, off its own cooldown. */
+        /** The nearest other bot (not a stand-in) within range of the spot, off its own cooldown (and, with the ear on, not busy). */
         static Player witness(Player rescued, Location at, int range, long now) {
             if (at == null) return null;
-            Player best = null; double bd = range + 0.5;
+            Player best = null; double bd = range + 0.5; boolean sawBusy = false;
             for (Player p : Repository.getPlayers()) {
                 if (p == null || p == rescued || !p.isActive() || !p.isArtificial() || Companions.human(p)) continue;
                 double d = dist(p.getLocation(), at);
                 if (d > bd || NEXT_TALK.getOrDefault(key(p), 0L) > now) continue;
+                if (EAR && busy(p, now)) { sawBusy = true; continue; } // P66 C2
                 best = p; bd = d;
             }
+            if (best == null && sawBusy) held("busy", now);
             return best;
+        }
+
+        /** P66 C2: a bot that is dead, fighting, escorting, on an errand, questing, dealing or with a companion says nothing. Same clauses as the busy lists. */
+        static boolean busy(Player p, long now) {
+            if (p == null) return true;
+            try {
+                if (p.getAttribute("state:death", false) || p.inCombat()) return true;
+                if (Scenes.Greet.escorting(p) || QuestRunner.active(p) || Deals.involved(p) || PlayerTrades.SESSIONS.containsKey(p) || AfkTasks.RUNNING.containsKey(key(p))) return true;
+                SmartAdventurers.Brain m = SmartAdventurers.BRAINS.get(key(p));
+                if (m == null) return false;
+                return m.runner != null || m.errandNoStar() || m.starUntil > now || m.companion != null || m.errandFor != null;
+            } catch (Throwable t) { return true; }
+        }
+
+        /** P66 C3: keys of the humans within HEAR_RANGE of the speaker, or null when any of them already heard HEAR_CAP remarks in the window. */
+        static java.util.List<String> hearers(Player speaker, long now) {
+            java.util.List<String> out = new java.util.ArrayList<>();
+            for (Player p : Repository.getPlayers()) {
+                if (p == null || !p.isActive() || !Companions.human(p) || dist(p.getLocation(), speaker.getLocation()) > HEAR_RANGE) continue;
+                String k = key(p);
+                if (count(k, now) >= HEAR_CAP) return null;
+                out.add(k);
+            }
+            return out;
+        }
+
+        static int count(String k, long now) {
+            long[] t = HEARD.get(k); if (t == null) return 0;
+            int n = 0; synchronized (t) { for (long x : t) if (x > 0 && now - x < HEAR_WINDOW) n++; }
+            return n;
+        }
+
+        static void note(String k, long now) {
+            if (now >= nextPrune) { nextPrune = now + 60_000L; prune(now); } // P69 #15
+            long[] t = HEARD.computeIfAbsent(k, x -> new long[HEAR_CAP]);
+            synchronized (t) { int oldest = 0; for (int i = 1; i < t.length; i++) if (t[i] < t[oldest]) oldest = i; t[oldest] = now; }
+        }
+
+        /** P66: logout of a human (or a stand-in) forgets what it heard. */
+        static void forget(Player p) { if (p != null) try { HEARD.remove(key(p)); } catch (Throwable ignored) { } }
+
+        /**
+         * P69 #15: forget() runs only for a stand-in's logOut, never for a real human's, so HEARD grew by one entry per human ever
+         * near a remark. Entries whose every time is outside HEAR_WINDOW count 0 anyway (count()), so dropping them changes nothing
+         * but the memory. Run from note() at most once a minute; returns how many went.
+         */
+        static volatile long nextPrune;
+        static int prune(long now) {
+            int n = 0;
+            for (Map.Entry<String, long[]> e : HEARD.entrySet()) {
+                long[] t = e.getValue(); boolean live = false;
+                synchronized (t) { for (long x : t) if (x > 0 && now - x < HEAR_WINDOW) { live = true; break; } }
+                if (!live && HEARD.remove(e.getKey(), t)) n++;
+            }
+            return n;
+        }
+
+        /** P66: count a held remark; at most one log line a minute so a held stream never floods the log. Never names a human. */
+        static void held(String why, long now) {
+            if ("busy".equals(why)) heldBusy++; else if ("cap".equals(why)) heldCap++; else heldHuman++;
+            lastHeld = why;
+            if (now < nextHeldLog) return;
+            nextHeldLog = now + 60_000L;
+            log("rescue-ear held " + why + " (busy " + heldBusy + ", cap " + heldCap + ", human " + heldHuman + ")");
         }
     }
 }

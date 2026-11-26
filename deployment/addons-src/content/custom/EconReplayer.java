@@ -245,7 +245,7 @@ public final class EconReplayer implements StartupListener {
             if (over) return;
             over = true; RUNNING.remove(s.bug);
             result(s, null, bot == null ? "-" : bot.getUsername(), result, w);
-            if (bot != null) try { AfkTasks.Runner r = AfkTasks.RUNNING.get(bot.getUsername().toLowerCase(Locale.ROOT)); if (r != null) r.halt(); bot.clear(); } catch (Throwable ignored) { }
+            if (bot != null) try { AfkTasks.Runner r = AfkTasks.RUNNING.get(bot.getUsername().toLowerCase(Locale.ROOT)); if (r != null) r.halt(); Bob.leave(bot, "clear"); bot.clear(); } catch (Throwable ignored) { }
         }
         int have(int id) { return bot.getInventory().getAmount(id) + bot.getBank().getAmount(id); }
     }

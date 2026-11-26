@@ -177,7 +177,7 @@ public final class BotLife implements StartupListener {
         @Override
         public void tick() {
             if (bot == null || !bot.isActive()) return;
-            if (!introduced) { introduced = true; BotChat.activity(bot, () -> "picking herbs around Taverley for the Exchange"); }
+            if (!introduced) { introduced = true; BotChat.activity(bot, () -> "picking herbs around Taverley for the Exchange"); if (W3Skills.HERB_FIX) System.out.println("[BotLife] herb gatherer " + bot.getUsername() + " ticking at " + bot.getLocation()); }
             long now = System.currentTimeMillis();
             if (now - last > 6_000 && !AfkTasks.RUNNING.containsKey(bot.getUsername().toLowerCase(java.util.Locale.ROOT))) { scriptAPI.randomWalkTo(home, 14); last = now; } // not while on a haul (it was cancelling the runner's walk every 6 s, review 10-22)
             if (now > nextChat) { say(pick(LINES)); nextChat = now + 60_000 + RNG.nextInt(120_000); }
@@ -186,13 +186,19 @@ public final class BotLife implements StartupListener {
                 // the haul onto the Exchange through the ledger like any other bot (2026-10-20).
                 AfkTasks.ensureHerbSpots();
                 AfkTasks.Spot[] spots = AfkTasks.SPOTS.get(AfkTasks.Task.HERB_DRUIDS);
+                if (W6Herbs.SUPPLY) spots = new AfkTasks.Spot[]{AfkTasks.sp(W6Herbs.DRUID_SPOT_NAME, W6Herbs.DRUID[0], W6Herbs.DRUID[1])}; // W6 (-Dartisans.herbSupply): the Taverley dungeon druids; the surface ones stand behind the tower's Thieving 46 door ("no chaos druid spot")
                 if (spots != null && spots.length > 0) {
                     AfkTasks.Spot sp = spots[0]; for (AfkTasks.Spot s2 : spots) if (s2.at.getDistance(home) < sp.at.getDistance(home)) sp = s2;
                     AfkTasks.Runner r = new AfkTasks.Runner(bot, AfkTasks.Task.HERB_DRUIDS, true, FAST ? 6 : 24, false, true);
                     r.sell = true; r.spot = sp.at; r.setDelay(3);
+                    if (W6Herbs.SUPPLY) { r.questSpots = spots; W6Herbs.gathererTrips++; } // W6: relocate() waits for respawns at this spot (SPOTS has none for the task)
                     AfkTasks.launch(r, AfkTasks.State.TO_SPOT, sp.at); // audit 10-23 A-11: a halted start isn't left in RUNNING
                     say(pick(new String[]{"Off to the druids. They've got the good herbs.", "Herb run. Mind the druids' spells.", "Satchel's empty. Druid time."}));
-                    System.out.println("[BotLife] herb gatherer " + bot.getUsername() + " off to the chaos druids");
+                    System.out.println("[BotLife] herb gatherer " + bot.getUsername() + " off to the chaos druids" + (W6Herbs.SUPPLY ? " at " + sp.at.getX() + "," + sp.at.getY() + " (W6)" : ""));
+                    if (W6Herbs.SUPPLY) W6Herbs.say(bot.getUsername(), "herbSupply", "gatherer", "herb gatherer trip to the Taverley dungeon chaos druids", now); // w9 s62fire: the lane line (flag on only)
+                } else if (W3Skills.HERB_FIX) { // W3 fix 2 (-Dartisans.herbFix): it never hauled in s58, s59 or f59 and said nothing; say why
+                    int named = 0, surface = 0; for (HuntMap.Hunt h : HuntMap.HUNTS) if (h.name != null && h.name.equalsIgnoreCase("Chaos druid")) { named++; if (h.spot.getY() < 6400) surface++; }
+                    System.out.println("[BotLife] herb gatherer " + bot.getUsername() + " has no chaos druid spot (hunts named Chaos druid: " + named + ", on the surface: " + surface + ")");
                 }
                 nextHaul = now + (FAST ? 30_000 : 15 * 60_000 + RNG.nextInt(10 * 60_000));
             }

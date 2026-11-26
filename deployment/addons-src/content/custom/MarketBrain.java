@@ -102,12 +102,35 @@ public final class MarketBrain implements StartupListener {
                 try { refresh(); } catch (Throwable t) { System.out.println("[MarketBrain] refresh failed: " + t); }
             }
         }, FAST ? 15_000 : 90_000, FAST ? 60_000 : 300_000);
+        if (Ledger.BOOT_FAIR && !FAST) {
+            System.out.println("[Economy] boot fair on: hourly at minute " + Ledger.FAIR_MINUTE + " of each hour, held for the boot grace and until the fleet is in (clerk.bootFair)");
+            TIMER.schedule(new TimerTask() { @Override public void run() { try { int[] f = CoinWatch.fleetIn(); fairTick(System.currentTimeMillis(), f[0], f[1], MarketBrain::hourly); } catch (Throwable t) { System.out.println("[MarketBrain] hourly failed: " + t); } } }, 120_000, 30_000);
+        } else
         TIMER.schedule(new TimerTask() {
             @Override
             public void run() {
                 try { hourly(); } catch (Throwable t) { System.out.println("[MarketBrain] hourly failed: " + t); }
             }
         }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000);
+        if (W3Skills.anyOn()) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W3Skills.line()); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // W3 wave 1: one counter line an hour, only with a W3 flag on (w4-jobshare: its own timer; inside the else above, clerk.bootFair runs skipped it)
+        if (W5aSkills.anyOn()) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W5aSkills.line()); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // W5 wave 2 lane A: one counter line an hour, only with a W5a flag on (own timer like [W3]; inside the else above, clerk.bootFair runs skipped it)
+        if (W6Magic.anyOn()) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W6Magic.line(Ledger.alchedToday, Ledger.ALCH_DAILY_CAP)); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // W6 Magic lane: one counter line an hour, only with a W6 Magic flag on (own timer like [W5a])
+        if (W6Slayer.anyOn()) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W6Slayer.line()); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // W6 Slayer: one counter line an hour, only with its flag on
+        if (Boolean.getBoolean("bots.slayer.duradel") && Slayer.DURADEL) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W13Duradel.line()); } catch (Throwable ignored) { } } }, FAST ? 35_000 : 125_000, FAST ? 120_000 : 3_600_000); // w13 lane B: [Slayer] duradel hourly
+        if (Boolean.getBoolean("bots.slayer.chaeldar") && Slayer.CHAELDAR) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W9Chaeldar.line()); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // w9 lane D: [Slayer] chaeldar hourly (off: Slayer not touched here)
+        if (W8Lines.anyOn()) W8Lines.schedule(TIMER, FAST); // W8 wave 4 lane B: [SmithOwn] [MineGuild] [Hunter] [SlayerOnly] hourly lines, each only with its flag on
+        if (W34Skills.anyOn()) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W34Skills.line()); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // W34 gaps: one line an hour, only with a W34 flag on
+        if (W5bSkills.anyOn()) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W5bSkills.line()); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // W5 wave 2 lane B: one counter line an hour, only with a W5b flag on (own timer like [W3]; inside the else above, clerk.bootFair runs skipped it)
+        if (RcRun.ON) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(RcRun.line()); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // W6 altarLoop: one [RC] counter line an hour, only with the flag on (own timer like [W5a])
+        if (RcRun.LOOP2 || RcRuns.ON) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(RcRuns.line()); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // W8 wave 5: one [RC2] counter line an hour, only with altarLoop2 or rc.runs on (own timer)
+        if (W6Combat.anyOn()) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W6Combat.line()); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // W6 wave 3 combat lane: one counter line an hour, only with a W6c flag on (own timer like [W3])
+        if (W6Herbs.anyOn()) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W6Herbs.line(MarketBrain::stockOf)); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // W6 wave 3 herb lane: one counter line an hour, only with a W6h flag on (own timer like [W3])
+        if (W7Places.anyOn()) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W7Places.line()); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // W7 places (wave 4): one counter line an hour, only with a W7 flag on
+        if (W37Craft.ANY) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W37Craft.line()); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // w37-craft: hourly counters, flag on only
+        if (W36Silent.anyOn()) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W36Silent.line()); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // w36-silent2
+        if (W7cSkills.anyOn()) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W7cSkills.line()); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // W7 wave 4 lane chains: one counter line an hour, only with a W7c flag on (own timer like [W3])
+        if (W8Polish.anyOn()) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W8Polish.line()); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // W8 wave 5 polish: own timer, only when a W8 flag is on
+        if (W10Skills.anyOn()) TIMER.schedule(new TimerTask() { @Override public void run() { try { System.out.println(W10Skills.line()); } catch (Throwable ignored) { } } }, FAST ? 30_000 : 120_000, FAST ? 120_000 : 3_600_000); // W10 lane L: one counter line an hour, only with a W10 flag on (own timer like [W8])
         System.out.println("[MarketBrain] watching " + CATALOGUE.size() + " task items; board every 5 min, ledger hourly");
     }
 
@@ -143,6 +166,11 @@ public final class MarketBrain implements StartupListener {
      */
     /** audit 10-23 X-4: botRef for the GE overlay (BotPrices): bot stock is never priced under it. */
     public static int botRefFor(int id) { return botRef(id); }
+    /** econ2 M2 (-Dclerk.fix2): the floor for bot stock listed to players: botRef, and never under the item's base (flag off = botRef). */
+    public static int botFloorFor(int id) { int r = botRef(id); return Ledger.CLERK_FIX2 && PriceDrift.LOADED ? Ledger.floorPick(r, PriceDrift.BASE.get(id), true) : r; }
+
+    /** econ3 M2 buy side (-Dclerk.fix2): the price a bot's payment to a player is counted from: botRef, and never over the item's base (flag off = botRef). */
+    public static int botCeilFor(int id) { int r = botRef(id); return Ledger.CLERK_FIX2 && PriceDrift.LOADED ? Ledger.ceilPick(r, PriceDrift.BASE.get(id), true) : r; }
 
     static int botRef(int id) {
         int v = value(id);
@@ -152,6 +180,17 @@ public final class MarketBrain implements StartupListener {
         long lo = Math.max(1, Math.round(base * PriceDrift.FLOOR)), hi = Math.max(lo, Math.round(base * PriceDrift.CEILING));
         return (int) Math.max(lo, Math.min(hi, v));
     }
+
+    /** w13d BUG-1 (-Dmarket.chargeCheck, default off): the purse checks of the switches live on train-65 (ranged.melee bow and arrows, style.restock arrows, summoning.heal bunyip) use the price really charged. Off = the guide, as before. */
+    static final boolean CHARGE_CHECK = Boolean.getBoolean("market.chargeCheck");
+    /** w13d BUG-1: the unit Ledger.consume charges for id (Ledger.price: botRef under clerk.fix2, the guide without), never under 1. */
+    static int chargePrice(int id) { return Math.max(1, Ledger.price(id)); }
+    /** w13d BUG-1: the unit for a buy out of bot stock or else a shop (the shop takes the guide): the dearer of the two. */
+    static int eitherPrice(int id) { return Math.max(chargePrice(id), Math.max(1, value(id))); }
+    /** w13d BUG-1 (-Dmarket.chargeCheck): chargePrice with the flag, the guide (the old check) without. */
+    static int checkPrice(int id) { return CHARGE_CHECK ? chargePrice(id) : value(id); }
+    /** w13d BUG-1 (-Dmarket.chargeCheck): eitherPrice with the flag, the guide (the old check) without. */
+    static int checkEither(int id) { return CHARGE_CHECK ? eitherPrice(id) : value(id); }
 
     /**
      * Takes n of an item out of bot stock through the GE worker queue, never below zero.
@@ -416,6 +455,20 @@ public final class MarketBrain implements StartupListener {
     static final long HOURLY_GAP_MS = 40;
     static void hourlyGap() { try { Thread.sleep(HOURLY_GAP_MS); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); } }
 
+    static String fairSaid = "";
+    /** boot1 (-Dclerk.bootFair): one 30 s tick of the slot clock (Ledger.fairHold). Runs the hourly when its slot is due and returns null; else returns why it is held, with one line per boot for a slot that is owed but waiting. */
+    static String fairTick(long now, int in, int roster, Runnable hourly) {
+        String hold = Ledger.fairHold(now, Ledger.bootAt, Ledger.fairLastRound, Ledger.FAIR_MINUTE, in, roster);
+        if (hold != null) {
+            if (!"served".equals(hold) && !hold.equals(fairSaid)) { fairSaid = hold; System.out.println("[Economy] boot fair: hourly held (" + hold + ", " + in + " of " + roster + " bots in, " + (now - Ledger.bootAt) / 60_000L + " min after boot): nothing trimmed, nothing skipped"); }
+            return hold;
+        }
+        long late = (now - Ledger.slotAt(now, Ledger.FAIR_MINUTE)) / 60_000L;
+        if (late >= 2) System.out.println("[Economy] boot fair: late hourly, " + late + " min after its slot (" + in + " of " + roster + " bots in)");
+        Ledger.fairLastRound = now; fairSaid = "";
+        hourly.run();
+        return null;
+    }
     static void hourly() {
         final List<int[]> trimPlan = new ArrayList<>(); // {item id, planned cut}, in the old iteration order of the stock map
         synchronized (MarketBrain.class) {
@@ -483,16 +536,18 @@ public final class MarketBrain implements StartupListener {
         }
         } // end of the MarketBrain-only section (P18)
         int trimmedItems = 0;
-        long trimmedUnits = 0;
+        long trimmedUnits = 0, trimPay = 0;
+        try { Ledger.econRoundStart(); } catch (Throwable ignored) { } // econ1: no-op with clerk.bandBudget and market.exportPay off
         for (int[] t : trimPlan) { // P18: each item takes the GE database lock (takeFromStock) and then the Ledger lock (trim) for itself only
             hourlyGap(); // ~52 items x 40 ms: the trims spread over about 2 s instead of running back to back
             int cut = takeFromStock(t[0], t[1]);
             if (cut <= 0) continue;
-            try { Ledger.trim(t[0], cut); } catch (Throwable ignored) { } // the sellers' lots shrink with the pile (consultant check Q2)
+            try { if (Ledger.EXPORT_PAY) trimPay += Ledger.trimPaid(t[0], cut); else Ledger.trim(t[0], cut); } catch (Throwable ignored) { } // the sellers' lots shrink with the pile (consultant check Q2)
             trimmedItems++;
             trimmedUnits += cut;
         }
         if (trimmedItems > 0) System.out.println("[Economy] flood guard trimmed " + trimmedUnits + " units across " + trimmedItems + " oversupplied items");
+        if (Ledger.EXPORT_PAY && trimmedItems > 0) System.out.println("[Economy] export pay: " + trimPay + " gp for trimmed units at " + Ledger.EXPORT_PCT + "% of botRef (budget " + Ledger.econTrimBudget + ")");
         // P18: same calls, same order, same lines; each is its own short Ledger-lock hold, no outer lock, with a tick-sized gap between them.
         try { hourlyGap(); String c = Ledger.clerkRound(); if (c != null) System.out.println("[Economy] " + c); hourlyGap(); System.out.println("[Economy] ledger: " + Ledger.summary()); hourlyGap(); Ledger.save(); } catch (Throwable t) { System.out.println("[Economy] ledger failed: " + t); }
         List<Entry> top = new ArrayList<>();

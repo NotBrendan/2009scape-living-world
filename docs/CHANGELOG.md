@@ -4,6 +4,46 @@ What shipped, newest first, condensed from the private tracker (which logged eve
 live time). Bug numbers refer to a register that is not published; the behaviour is described in
 [bot-behaviour.md](bot-behaviour.md) and [TECHNICAL-REFERENCE.md](TECHNICAL-REFERENCE.md).
 
+## Late November 2026 (code as of November 25, build train-80)
+
+Everything below is behind its own `-D` switch and **off by default**. The switches that were on on
+the author's server on November 25 are listed in
+[../deployment/live-flags.txt](../deployment/live-flags.txt). Each one went through paired test runs
+(switch on vs off on two throwaway worlds) and, where it moves coins, a scripted scenario before it
+was switched on.
+
+* **Skill training spread:** bots share their time across skills (`bots.jobShare`), stop picking
+  jobs that give no experience (`bots.brokeJob.zeroSkip`), and use the Mining and Fishing Guilds
+  (`bots.mine.guild`, `bots.fish.guild`, `bots.fish.guild2`), power-mine (`bots.mine.power`), fish
+  sharks (`bots.fish.shark`), and run Barbarian agility laps (`bots.agility.laps`, `bots.agility.barb`).
+* **Combat:** a stance plan and a Defence share (`bots.stancePlan`, `bots.style.defShare`), weapons
+  picked for the monster (`bots.weaponByFoe`), special-attack weapons (`bots.attack.spec`), amulets
+  and armour above rune (`bots.kit.amulets`, `bots.kitAboveRune`), a melee fallback and better kit
+  for rangers (`bots.ranged.melee`, `bots.ranged.kit2`, `bots.style.restock`), cheaper food
+  (`bots.fight.cheapFood`), and safe retreats (`bots.fight.safeRetreat`, `bots.fight.karaRetreat`).
+* **Slayer:** Vannaka with points, banking first and tasks a poor bot can afford (`bots.slayer.*`),
+  fixes for bats, ice giants, Vannaka's door and the errand cap. Chaeldar and Duradel are in the
+  code (`bots.slayer.chaeldar`, `bots.slayer.duradel`) and were switched on last.
+* **Summoning:** Wolf Whistle and pouches (`bots.summoning.*`), healing and combat familiars, and the
+  beast of burden (`bots.summoning.bob`), which carries a pack from Summoning 13.
+* **Farming and Hunter:** herb runs with better seeds (`bots.farming.herbs2`), tree runs
+  (`bots.farming.trees`, `bots.farming.trees.run`), compost (`bots.farming.v2`), bird hunting
+  (`bots.hunter`).
+* **Artisans:** smiths smelt their own bars (`artisans.smithSmelt`), fletchers make arrow shafts and
+  their own bows (`bots.fletch.arrows`, `bots.fletch.own`), cooks burn less and cook on fires
+  (`bots.cook.burn`, `bots.cook.fire`), firemaking lines (`bots.fire.line`), plank types and a
+  Construction hotspot (`bots.plankTypes`, `bots.con.hotspot`), herb supply for herbalists.
+* **Magic, Prayer, Runecrafting, Thieving:** teleports (`bots.magic.tele`), any staff counts
+  (`bots.magic.anyStaff`), enchanting and High Alchemy of everything worth it (`bots.magic.enchant`,
+  `bots.magic.alchAll`), prayer that follows the stats (`bots.prayer.stat`), nature and law rune
+  runs (`bots.rc.natureLaw`), Ardougne pickpocketing (`bots.thieve.ardy`).
+* **Economy and pathing:** a clerk with a daily budget and a boot-time fair (`clerk.*`), export pay
+  (`market.exportPay`), a coin watch that knows the hourly swing (`coinwatch.bandAware`,
+  `coinwatch.bootSeaExempt`), and route fixes (`nav.freeExit`, `nav.p93Fix`, `quest.p92Fix`).
+* **Test tooling:** `Seed` and `Scen` set up forced states (levels, items, a start tile) for scripted
+  scenario runs. They refuse to run unless the server was started by the test harness, so they do
+  nothing on a normal server.
+
 ## November 2026
 
 * **Reach fixes** (`-Dreach`, default off): bots stop walking into places they cannot leave. The

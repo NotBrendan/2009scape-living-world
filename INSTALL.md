@@ -115,6 +115,13 @@ server.
 | `quests.share`, `quests.coinCap`, `quests.off` | 0.15, 100000, (none) | share of bots allowed to quest, daily quest coins, scripts to ship switched off |
 | Trial-only | | `traders.fast`, `afk.debug`, `jobs.debug`, `botchat.debug`, `smartbots.testAgility`, `spectacle.test`, `routemap.test`, `gates.test`, `watchdog.test`, `bounty.test`, `quests.test`, `xp.debug` |
 
+**Skill, Slayer and economy switches (late November 2026).** The newer switches, named
+`bots.*`, `artisans.*`, `clerk.*`, `coinwatch.*`, `market.*`, `nav.*` or `quest.*`, are off by default.
+[deployment/live-flags.txt](deployment/live-flags.txt) lists the 83 that ran on the author's server
+on November 25, 2026, with a one-line command to pass them all. [docs/CHANGELOG.md](docs/CHANGELOG.md)
+says what each group does. Never pass `smartbots.seed.*`, `scen.*` or `test.*` on a real server (they
+refuse to run there anyway).
+
 The full list with what each one changes is in [docs/bot-behaviour.md](docs/bot-behaviour.md)
 section 14 and [docs/TECHNICAL-REFERENCE.md](docs/TECHNICAL-REFERENCE.md) section 12.
 

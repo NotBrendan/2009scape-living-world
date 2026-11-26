@@ -49,9 +49,18 @@ public final class NavWalker {
      * batch 21 A: payer = this walker pays the Al Kharid toll at the gate (AfkTasks.Runner.tollGate, the shop walk's and the
      * quest Mover's tollHop). Only a payer with 10 gp gets a route through the gate; every other walk goes round or has none.
      */
-    public static Location step(Player bot, Location dest, boolean payer) {
+    public static Location step(Player bot, Location dest, boolean payer) { return step(bot, dest, payer, false); }
+
+    /**
+     * P58: anyOn = plan even while nav.on is off (the graph is still built at startup). Only AfkTasks passes true, and only for
+     * a player's ::afk walk in travel mode: nav.on is the bots' switch (its auto-revert guard counts bot failures only), and with
+     * it off a player fell back to the learned route, which leads Varrock -> Edgeville into the house pocket at 3139,3498.
+     */
+    public static Location step(Player bot, Location dest, boolean payer, boolean anyOn) {
         boolean tollOk = payer && bot != null && Ledger.Wallet.coins(bot) >= 10;
-        Location hop = stepInner(bot, dest, tollOk);
+        if (tollOk && SmartAdventurers.P73_TOLL_ON && westOfToll(bot.getLocation()) && westOfToll(dest)) { tollOk = false; SmartAdventurers.p73Count("toll-westwest", SmartAdventurers.P73_TOLL); } // P73 B1: west of the gate to west of it never through Al Kharid (the plan flipped between the gate and the lane north: 3267,3228 / 3265,3240 path loops on dark-wizard trips)
+        if (tollOk && P82.ON && bot != null && dest != null && P82.tollSameSide(bot.getLocation().getX(), bot.getLocation().getY(), bot.getLocation().getZ(), dest.getX(), dest.getZ())) { tollOk = false; P82.count("toll-sameside", P82.TOLL); } // P82 fix 1: next to the gate, a goal on this side is planned without the toll (tollHop never hops toward it)
+        Location hop = stepInner(bot, dest, tollOk, anyOn && bot != null && !bot.isArtificial());
         if (hop != null) Watchdog.fdrv(bot, Failures.DRV_PLANNER); // batch 19a design 3.1: the planner gave this hop
         return hop;
     }
@@ -73,28 +82,30 @@ public final class NavWalker {
         if (d != null && rh != 0 && NavPlanner.regionAt(d) == rh) return false; // the destination is in the same pocket
         Location out = NavPlanner.nearBig(here);
         if (out == null || out.getDistance(here) > 2) return false;
-        bot.getProperties().setTeleportLocation(out); pocketNudges++;
+        Bob.tele(bot).getProperties().setTeleportLocation(out); pocketNudges++;
         if (pocketNudges <= 20 || pocketNudges % 100 == 0) System.out.println("[Nav] " + bot.getUsername() + " stepped out of a pocket at " + here + " to " + out + " (" + pocketNudges + " so far)");
         return true;
     }
 
-    static Location stepInner(Player bot, Location dest, boolean tollOk) { // batch 19a: the batch 18 step(); batch 21 A: tollOk
-        if (!ON || bot == null || dest == null || !NavPlanner.built) return null;
+    static Location stepInner(Player bot, Location dest, boolean tollOk, boolean anyOn) { // batch 19a: the batch 18 step(); batch 21 A: tollOk; P58: anyOn (players only)
+        if ((!ON && !anyOn) || bot == null || dest == null || !NavPlanner.built) return null;
         Location here = bot.getLocation();
+        final int band = anyOn ? Heat.bandAny(bot) : Heat.band(bot); // P58: a player's ::afk walk keeps clear of monsters that outclass it too
         if (here.getZ() != 0 || dest.getZ() != 0 || !NavGrid.inBounds(here.getX(), here.getY()) || !NavGrid.inBounds(dest.getX(), dest.getY())) { outside++; outsideSeen(bot, here, dest); return null; } // dungeons and other floors: the old walk (phase 2 of the plan)
         if (here.getDistance(dest) <= 2) { STATES.remove(key(bot)); return null; }
         if (pocketNudge(bot, here, dest)) return null; // batch 20 B2: out of a closed pocket first (lands next tick)
         State s = STATES.computeIfAbsent(key(bot), k -> new State());
+        if (P89.ON && s.route != null && s.last != null && P89.jumped(s.last.getX(), s.last.getY(), here.getX(), here.getY())) { P89.count("stale-route " + bot.getUsername() + " at " + here.getX() + "," + here.getY(), P89.STALE); s.route = null; } // P89: teleported or climbed since the last step: the kept route is stale, plan again from here
         if (s.route == null || s.dest == null || s.dest.getDistance(dest) > 2 || s.tollOk != tollOk) { // a new destination (batch 21 A: or a change in toll permission)
             Long retry = NO_ROUTE.get(noRouteKey(bot, dest));
             if (retry != null && retry > System.currentTimeMillis()) return null; // audit B-7: failed a moment ago, don't search again yet
             if (s.route != null && s.dest != null && here.getDistance(s.dest) > 4) redirected(bot, s, here, dest); // batch 18 item3: a route given up for another goal (not one that just arrived)
-            s.route = NavPlanner.plan(here, dest, agility(bot), Heat.band(bot), tollOk); s.tollOk = tollOk; s.dest = dest; s.hop = 0; s.still = 0; s.last = here; s.from = here;
+            s.route = NavPlanner.plan(here, dest, agility(bot), band, tollOk); s.tollOk = tollOk; s.dest = dest; s.hop = 0; s.still = 0; s.last = here; s.from = here;
             if (s.route == null) { noRoute++; noRouteSeen(bot, here, dest, "first plan", true); failed(bot, dest); return null; } // batch 18 item3: reason always logged (rate-limited)
             routed++; s.plannedT = System.currentTimeMillis(); // batch 19b
         }
         // stall: no movement for 30 ticks of calls -> replan from here (a monster in a doorway, a door that didn't open)
-        if (s.last != null && s.last.getX() == here.getX() && s.last.getY() == here.getY()) { if (++s.still >= 30) { s.still = 0; replans++; s.route = NavPlanner.plan(here, dest, agility(bot), Heat.band(bot), tollOk); s.hop = 0; if (s.route == null) { noRoute++; noRouteSeen(bot, here, dest, "stall replan", false); failed(bot, dest); return null; } s.plannedT = System.currentTimeMillis(); } } // batch 18 item3 // batch 19b: plannedT on a successful stall replan
+        if (s.last != null && s.last.getX() == here.getX() && s.last.getY() == here.getY()) { if (++s.still >= 30) { s.still = 0; replans++; s.route = NavPlanner.plan(here, dest, agility(bot), band, tollOk); s.hop = 0; if (s.route == null) { noRoute++; noRouteSeen(bot, here, dest, "stall replan", false); failed(bot, dest); return null; } s.plannedT = System.currentTimeMillis(); } } // batch 18 item3 // batch 19b: plannedT on a successful stall replan
         else s.still = 0;
         s.last = here;
         int hop0 = s.hop; // batch 19b: for hopT
@@ -103,7 +114,7 @@ public final class NavWalker {
         if (s.hop > hop0) s.hopT = System.currentTimeMillis(); // batch 19b: the hop advanced
         if (s.hop >= s.route.hops.size()) {
             if (here.getDistance(dest) <= 4) return dest;
-            s.route = NavPlanner.plan(here, dest, agility(bot), Heat.band(bot), tollOk); s.hop = 0;
+            s.route = NavPlanner.plan(here, dest, agility(bot), band, tollOk); s.hop = 0;
             if (s.route == null) { noRoute++; noRouteSeen(bot, here, dest, "next stretch", false); failed(bot, dest); return null; } // batch 18 item3
             s.plannedT = System.currentTimeMillis(); // batch 19b: next stretch planned
             while (s.hop < s.route.hops.size() && here.getDistance(s.route.hops.get(s.hop)) <= 2) s.hop++;
@@ -161,7 +172,7 @@ public final class NavWalker {
             if (offGrid(here) || offGrid(dest)) { offGridSkipped++; return; }
             NavPlanner.Route r = NavPlanner.plan(here, dest, agility(bot));
             System.out.println("[NavShadow] " + bot.getUsername() + " " + what + " " + here + " -> " + dest + ": " + (r == null ? "NO ROUTE" : r.tiles + " tiles, " + r.doors + " doors"));
-            if (r == null && bot.isArtificial()) SHADOW_FAILS.add(noRouteKey(bot, dest)); // batch 23 pre-review 2.2: bots only (a player's no-route walk must not feed the planner guard)
+            if (r == null && bot.isArtificial()) noteNoRoute(noRouteKey(bot, dest), here, dest); // batch 23 pre-review 2.2: bots only (a player's no-route walk must not feed the planner guard)
             Trip t = new Trip(); t.bot = bot; t.dest = dest; t.from = here; t.plan = r == null ? -1 : r.tiles; t.t0 = System.currentTimeMillis(); t.lx = here.getX(); t.ly = here.getY();
             Trip old = TRIPS.put(key(bot), t);
             if (old != null) outcome(old, "redirected", old.dest.getDistance(here));
@@ -176,6 +187,20 @@ public final class NavWalker {
     /** [planner had a route, planner had none] x [arrived, not arrived in 10 min, teleported, redirected], this window and since boot. */
     static final int[][] WIN = new int[2][4], ALL = new int[2][4];
     static final java.util.Set<String> WINDOW_FAILS = ConcurrentHashMap.newKeySet(), SHADOW_FAILS = ConcurrentHashMap.newKeySet();
+    /**
+     * P42 (-Dnav.guardIgnoreUnreachable, default off): a bot's no-route to a destination in another connected region (boat,
+     * teleport or gate by design: NavPlanner.crossRegion) is left out of SHADOW_FAILS, the guard's distinct no-route count, and
+     * so out of the baseline learned with the planner off too (like with like). The planner hands such a trip to the old walker
+     * on or off, so it says nothing about the planner; counted, the total grew with trips per window (planner ON ran ~1.9x the
+     * trips at the same ~11% no-route share) and tripped the guard at steady state (live, 11-08 and 11-09). Same-region
+     * no-routes still count. Not final: TestP42NavGuard flips it.
+     */
+    static volatile boolean guardIgnoreUnreachable = Boolean.getBoolean("nav.guardIgnoreUnreachable");
+    static final java.util.concurrent.atomic.AtomicInteger UNREACHABLE = new java.util.concurrent.atomic.AtomicInteger(); // P42: left out this window
+    static void noteNoRoute(String key, Location here, Location dest) {
+        if (guardIgnoreUnreachable && NavPlanner.crossRegion(here, dest)) { UNREACHABLE.incrementAndGet(); return; }
+        SHADOW_FAILS.add(key);
+    }
     static int rescues0;
     /** planner-guard-fix F1: rescues of bots the planner was walking (a route in STATES), this window; the guard judges these, not every stuck bot in the world. */
     static volatile int plannerRescues;
@@ -257,6 +282,8 @@ public final class NavWalker {
         int allFails = WINDOW_FAILS.size();
         int fails = SHADOW_FAILS.size(); // audit 10-23 N-11: the guard compares like with like, the trip-start plans the baseline learned from (all step() callers counted another population)
         WINDOW_FAILS.clear(); SHADOW_FAILS.clear();
+        int unreachable = UNREACHABLE.getAndSet(0); // P42
+        if (guardIgnoreUnreachable && (SHADOW || ON)) System.out.println("[Nav] guard: " + unreachable + " no-route trip starts to another region not counted (-Dnav.guardIgnoreUnreachable)");
         if (SHADOW || ON) System.out.println("[NavShadow] window" + (ON ? " (planner ON)" : "") + ": planner had a route -> arrived " + WIN[0][0] + ", not arrived " + WIN[0][1] + ", teleported " + WIN[0][2] + ", redirected " + WIN[0][3]
                 + "; no route -> arrived " + WIN[1][0] + ", not arrived " + WIN[1][1] + ", teleported " + WIN[1][2] + ", redirected " + WIN[1][3] + "; off-grid skipped " + offGridSkipped + "; stuck rescues " + rescues + ", distinct no-route " + fails + (ON ? " (all walks " + allFails + ", all rescues " + allRescues + ")" : "") + (warm ? " (warm-up, guard off)" : "")
                 + " (since boot: " + java.util.Arrays.deepToString(ALL) + ")");
@@ -296,6 +323,8 @@ public final class NavWalker {
         System.out.println("[Nav] AUTO-REVERT: " + why + "; planner off until a new data/survey/nav.on is created, " + how);
     }
 
+    /** P73 B1: on the surface west of the Al Kharid fence line (x 3267 and less; the gate is the step to 3268). */
+    static boolean westOfToll(Location l) { return l != null && l.getZ() == 0 && l.getY() >= 3140 && l.getY() < 6400 && l.getX() < 3268; } // y 3140+: not the desert (its Shantay Pass is reached through Al Kharid)
     static void forget(Player bot) { if (bot != null) { STATES.remove(key(bot)); try { AfkTasks.Runner.tollForget(bot); } catch (Throwable ignored) { } } } // audit B21-6: tollStuck's kept answer too
 
     public static String stats() { return "routed " + routed + ", outside the surface grid " + outside + ", no route " + noRoute + " (no stand tile at start " + noStandFrom + ", at goal " + noStandTo + ", no corridor " + noCorridor + "), doors opened " + doorsOpened + ", door not found " + doorsMissing + ", replans " + replans; }

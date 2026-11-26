@@ -173,6 +173,18 @@ public final class Gates implements StartupListener {
         };
     }
 
+    /** W6 altarLoop: the engine's ruin test (MysteriousRuinListener): Rune Mysteries done (the runecrafter artisan knows its trade, as seedTrade), and the talisman carried or the tiara worn. */
+    static Rule rcRuins(int talisman, int tiara, String name) {
+        final Rule q = quest("RUNE_MYSTERIES", "Rune Mysteries");
+        return new Rule() {
+            boolean ok(Player p) {
+                boolean key = p.getInventory().containsItem(new Item(talisman)) || p.getEquipment().containsItem(new Item(tiara));
+                return key && (q.ok(p) || Artisans.tradeOf(p) == Artisans.Trade.RUNECRAFTING);
+            }
+            String need() { return "Rune Mysteries and the " + name + " talisman or tiara"; }
+        };
+    }
+
     static Rule all(Rule... rs) {
         return new Rule() {
             boolean ok(Player p) { for (Rule r : rs) if (!r.ok(p)) return false; return true; }
@@ -242,7 +254,11 @@ public final class Gates implements StartupListener {
             ; // B1: x 2877 (the east door tile) and y 3556 (the walkway north of the guild) are outside its walls (clipping flags, TestB21G)
         g("edgeville-hill-giants", "the Edgeville dungeon hill giants", "key", 3096, 9824, 3125, 9852, item(983, "a brass key")); // batch 26 fix 4: behind the brass key door; bots climbed down and stalled at the landing 3096,9867 (33 rescues/24 h). TestB26: the 11 hill giants spawn at 3102-3119, 9829-9846
         g("taverley-blue-dragons", "the Taverley blue dragons", "key", 2890, 9785, 2945, 9815, any(item(1590, "a dusty key"), skill(Skills.AGILITY, 70, "Agility")));
+        if (Boolean.getBoolean("nav.p73Fix")) g("taverley-black-demons", "the Taverley black demons", "key", 2850, 9765, 2880, 9792, item(1590, "a dusty key")); // P73 B3: the black demons (HuntMap 2866,9780) lie past the blue dragons' key gate or the pipe, west of the box above; the dusty key only (the walker never takes the pipe: pair 1 had 70-Agility bots stuck there too). Bots without it walked from the ladder (2884,9797) into the wall at 2881,9794 (19 live rescues / 2 days)
+        if (W6Slayer.ON) g("taverley-hellhounds", "the Taverley hellhounds", "key", W6Slayer.HELL_X0, W6Slayer.HELL_Y0, W6Slayer.HELL_X1, W6Slayer.HELL_Y1, item(1590, "a dusty key")); // W6 (-Dbots.slayer.vannakaHunts): offline clipping BFS, the hellhounds (2851-2871, 9819-9853) are reached only through the dusty-key gate
         g("shantay-desert", "the desert past the Shantay Pass", "toll", 3140, 2830, 3520, 3114, all(coins(5), water())); // combat review 10-23 #9: and water for the heat
+        if (RcRun.ON) for (RcRun.Route r : RcRun.ROUTES) { if (!r.w6) continue; int[] b = r.room(); g("rc-" + r.name + "-altar", "the " + r.name + " altar", "item", b[0], b[1], b[2], b[3], rcRuins(r.talisman, r.tiara, r.name)); } // W6 altarLoop: the altar rooms behind the mysterious ruins (engine: Rune Mysteries, then the talisman used or the tiara worn)
+        if (RcRun.LOOP2 || RcRuns.ON) for (RcRun.Route r : RcRun.ROUTES) if (RcRun.gateNew(r, RcRun.ON, RcRun.LOOP2, RcRun.SECOND, RcRuns.ON, RcRuns.ALTARS)) { int[] b = r.room(); g("rc-" + r.name + "-altar", "the " + r.name + " altar", "item", b[0], b[1], b[2], b[3], rcRuins(r.talisman, r.tiara, r.name)); } // W8: the rooms of altarLoop2's second route and the rc.runs altars (flags off: none)
         for (Gate gt : GATES) {
             if ((gt.x1 - gt.x0) * (gt.y1 - gt.y0) > 600 * 600) continue;
             for (int cx = gt.x0 / RouteMap.CELL; cx <= gt.x1 / RouteMap.CELL; cx++) for (int cy = gt.y0 / RouteMap.CELL; cy <= gt.y1 / RouteMap.CELL; cy++)

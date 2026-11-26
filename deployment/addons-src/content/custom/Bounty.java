@@ -237,7 +237,7 @@ public final class Bounty implements StartupListener {
                 if (b.isEmpty()) player.sendMessage("<col=0000ff>The bots have everything they need right now. Check back later.");
                 else {
                     player.sendMessage("<col=0000ff>Bounty board: sell these on the Grand Exchange at up to the price shown and the bots buy them and add " + PREMIUM_PERCENT + "% of guide on top (paid to your bank). Other items: bots buy at up to " + BUYER_PERCENT + "% of guide.");
-                    for (Object[] row : b) { int list = Math.max(1, MarketBrain.botRef((int) row[0]) * BUYER_WANTED_PERCENT / 100); player.sendMessage("<col=0b5e1f>" + row[1] + ": list at up to " + String.format("%,d", list) + " gp each, bounty +" + String.format("%,d", (int) row[3] - (int) row[2]) + " gp each (guide " + String.format("%,d", (int) row[2]) + "), " + row[4] + " in stock"); }
+                    for (Object[] row : b) { int list = Math.max(1, MarketBrain.botCeilFor((int) row[0]) * BUYER_WANTED_PERCENT / 100); player.sendMessage("<col=0b5e1f>" + row[1] + ": list at up to " + String.format("%,d", list) + " gp each, bounty +" + String.format("%,d", (int) row[3] - (int) row[2]) + " gp each (guide " + String.format("%,d", (int) row[2]) + "), " + row[4] + " in stock"); }
                     player.sendMessage("<col=0000ff>Bots have " + String.format("%,d", artisanFunds()) + " gp between them for bounties.");
                 }
                 int shown = 0;

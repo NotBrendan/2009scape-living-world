@@ -58,6 +58,62 @@ final class QuestRestlessGhost {
         return true;
     }
 
+    /**
+     * P88 (live train-37+: "get the ghost's skull: short of Skull (0/1)" then ABANDONED): a full pack sends the altar's skull
+     * to the floor and the stage goes to 40, and from then on the altar search finds nothing. Before the search: one free
+     * slot; then the skull off the floor near the bot; and at stage 40 with no skull in the pack, the bank or the floor the
+     * altar gives it again (beforeSearch only), as the game does for a lost skull.
+     */
+    static QuestSteps.Step skullBack(String name, boolean beforeSearch) {
+        return new QuestSteps.Custom(name, 10, null, r -> {
+            Player p = r.bot;
+            if (has(SKULL, 1).test(p)) return QuestSteps.St.DONE;
+            QuestRunner.makeRoom(p, 1);
+            try {
+                for (int dx = -4; dx <= 4; dx++) for (int dy = -4; dy <= 4; dy++) {
+                    core.game.node.item.GroundItem g = core.game.node.item.GroundItemManager.get(SKULL, p.getLocation().transform(dx, dy, 0), p);
+                    if (g != null && g.isActive() && core.game.node.item.GroundItemManager.destroy(g) != null) {
+                        p.getInventory().add(new Item(SKULL, 1));
+                        r.log("  (P88) picked the skull up off the floor at " + g.getLocation());
+                        return QuestSteps.St.DONE;
+                    }
+                }
+            } catch (Throwable ignored) { }
+            if (beforeSearch && p.getQuestRepository().getStage(Q) == 40 && !p.getBank().contains(SKULL, 1) && under(p) && p.getLocation().getDistance(ALTAR) <= 6) {
+                p.getInventory().add(new Item(SKULL, 1));
+                r.log("  (P88) stage 40 and no skull anywhere: the altar gives it again");
+            }
+            return QuestSteps.St.DONE;
+        });
+    }
+
+    /** P92: the only way between the ladder corridor and the altar room is the Large door at 3111,9559 (see P92). */
+    static final int DOOR_SHUT = 33060;
+    static final Location DOOR_AT = Location.create(3111, 9559, 0), DOOR_W = Location.create(3110, 9559, 0), DOOR_E = Location.create(3112, 9559, 0);
+    static boolean altarSide(Player p) { Location l = p.getLocation(); return P92.altarSide(l.getX(), l.getY(), l.getZ()); }
+    static boolean doorShut() {
+        try { Scenery d = RegionManager.getObject(0, DOOR_AT.getX(), DOOR_AT.getY()); return d != null && d.isActive() && d.getId() == DOOR_SHUT; } catch (Throwable t) { return false; }
+    }
+
+    /** P92: open the altar-room door (inward: from the corridor; else from the altar side). Done once through it or it stands open. */
+    static QuestSteps.Step altarDoor(String name, boolean inward) {
+        final int[] st = {0, 0}; // wait, clicks
+        java.util.function.Predicate<Player> through = p -> !under(p) || (inward ? altarSide(p) : !altarSide(p));
+        return new QuestSteps.Custom(name, 60, r -> { st[0] = 0; st[1] = 0; }, r -> {
+            Player p = r.bot;
+            if (through.test(p) || !doorShut()) return QuestSteps.St.DONE;
+            if (st[0] > 0) { st[0]--; return QuestSteps.St.RUNNING; }
+            if (p.getWalkingQueue().isMoving() || p.getPulseManager().hasPulseRunning()) return QuestSteps.St.RUNNING;
+            if (++st[1] > 5) { r.log("  (P92) the altar-room door did not open (5 clicks, at " + p.getLocation() + ")"); return QuestSteps.St.FAILED; }
+            Scenery d = RegionManager.getObject(0, DOOR_AT.getX(), DOOR_AT.getY());
+            if (d == null) return QuestSteps.St.DONE;
+            QuestSteps.clearPopups(p);
+            if (!QuestSteps.click(p, d, "Open", IntType.SCENERY)) return QuestSteps.St.FAILED;
+            st[0] = 4;
+            return QuestSteps.St.RUNNING;
+        }).done(p -> through.test(p) || !doorShut());
+    }
+
     static boolean coffinOpen(Player p) { return QuestSteps.findScenery(p, SHED, 8, OPEN_COFFINS, null, null) != null; }
 
     static boolean ghostShowing(Player p) {
@@ -131,15 +187,23 @@ final class QuestRestlessGhost {
         s.step(openCoffin("open the coffin", false).done(stageAtLeast(Q, 30)));
         s.step(new QuestSteps.Talk("talk to the ghost", new int[]{GHOST}).until(stageAtLeast(Q, 30)).done(stageAtLeast(Q, 30)));
 
-        s.step(new QuestSteps.Collect("get the ghost's skull", SKULL, 1)
+        QuestSteps.Collect skull = new QuestSteps.Collect("get the ghost's skull", SKULL, 1)
                 .then(new QuestSteps.Walk("walk into the Wizards' Tower", TOWER, 4).done(p -> under(p) || p.getLocation().getZ() == 0 && p.getLocation().getDistance(TOWER) <= 4))
-                .then(new QuestSteps.Interact("down the ladder to the basement", new int[]{2147}, null, "Climb-down", TOWER, 10, false).until(QuestRestlessGhost::under).done(QuestRestlessGhost::under))
-                .then(new QuestSteps.Walk("walk to the altar", ALTAR, 3))
-                .then(new QuestSteps.Interact("search the altar", ALTARS, null, "Search", ALTAR, 10, false).until(has(SKULL, 1)))
-                .done(p -> has(SKULL, 1).test(p) || stageAtLeast(Q, 100).test(p)));
+                .then(new QuestSteps.Interact("down the ladder to the basement", new int[]{2147}, null, "Climb-down", TOWER, 10, false).viaHandler().until(QuestRestlessGhost::under).done(QuestRestlessGhost::under));
+        if (P92.ON) skull.then(new QuestSteps.Walk("(P92) walk to the altar-room door", DOOR_W, 1).done(p -> altarSide(p) || p.getLocation().getZ() == 0 && p.getLocation().getDistance(DOOR_W) <= 1))
+                .then(altarDoor("(P92) open the altar-room door", true));
+        skull.then(new QuestSteps.Walk("walk to the altar", ALTAR, 3));
+        if (P88.ON) skull.then(skullBack("(P88) make room, the skull off the floor or back from the altar", true));
+        skull.then(new QuestSteps.Interact("search the altar", ALTARS, null, "Search", ALTAR, 10, false).until(has(SKULL, 1)));
+        if (P88.ON) skull.then(skullBack("(P88) the skull off the floor", false));
+        s.step(skull.done(p -> has(SKULL, 1).test(p) || stageAtLeast(Q, 100).test(p)));
         s.step(new QuestSteps.Kill("fight off the skeleton", new String[]{"Skeleton"}, new int[0], 1, ALTAR).until(QuestRestlessGhost::skeletonGone).limit(600).done(QuestRestlessGhost::skeletonGone).optional());
+        if (P92.ON) {
+            s.step(new QuestSteps.Walk("(P92) back to the altar-room door", DOOR_E, 1).done(p -> !altarSide(p) || p.getLocation().getDistance(DOOR_E) <= 1));
+            s.step(altarDoor("(P92) open the altar-room door on the way out", false));
+        }
         s.step(new QuestSteps.Walk("back to the basement ladder", BASEMENT_LADDER, 2).done(p -> !under(p) || p.getLocation().getDistance(BASEMENT_LADDER) <= 2));
-        s.step(new QuestSteps.Interact("up the ladder", new int[]{32015}, null, "Climb-up", BASEMENT_LADDER, 8, false).until(p -> !under(p)).done(p -> !under(p)));
+        s.step(new QuestSteps.Interact("up the ladder", new int[]{32015}, null, "Climb-up", BASEMENT_LADDER, 8, false).viaHandler().until(p -> !under(p)).done(p -> !under(p)));
 
         s.step(new QuestSteps.Walk("back to the graveyard shed", SHED, 2));
         s.step(openCoffin("open the coffin for the skull", true).done(p -> coffinOpen(p) || stageAtLeast(Q, 100).test(p)));

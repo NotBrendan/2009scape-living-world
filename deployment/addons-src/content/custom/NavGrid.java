@@ -271,6 +271,16 @@ public final class NavGrid implements StartupListener {
         }
         if (n > 0) System.out.println("[Nav] " + n + " one-way door tiles kept as walls (Draynor Manor front doors)");
     }
+    /** w2 slayer bats (-Dbots.slayer.batsFix, default off): the Dig Site workmen's gate east of Varrock (3296,3428-3429) is never
+     *  opened by the engine, so its tiles stop being door tiles, in memory only (NavLocked). Off: nothing changes. */
+    static void closeLocked() {
+        if (grid == null || !NavLocked.ON) return;
+        try {
+            int n = NavLocked.close(grid, X0, Y0, W, H, true, NavLocked.RAW);
+            for (Integer i : NavLocked.RAW.keySet()) DOOR_EDGES.remove(i);
+            if (n > 0) System.out.println("[Nav] batsFix: " + n + " locked gate tiles kept as walls (Dig Site workmen's gate 3296,3428-3429)");
+        } catch (Throwable t) { System.out.println("[Nav] batsFix: " + t); }
+    }
     static void loadShutDoors() {
         SHUT_DOORS.clear(); // review fix 4: the one-way doors are built as doors (recordOneWay), then closed in memory (closeOneWay)
         // Audit B-10: the comment above was the intent, but every surveyor "stayed shut" record was copied. Keep only toll,
@@ -320,6 +330,7 @@ public final class NavGrid implements StartupListener {
                 if (rx > rx1) {
                     building = false;
                     try { recordOneWay(); closeOneWay(); } catch (Throwable t) { System.out.println("[Nav] one-way doors: " + t); } // review fix 4: closed in memory only
+                    closeLocked(); // w2 slayer bats (-Dbots.slayer.batsFix; off = no-op)
                     try { save(); } catch (Throwable t) { System.out.println("[Nav] save failed: " + t); }
                     graphAsync();
                     String msg = "[Nav] surface grid built: " + builtRegions + " regions, " + standable + " standable tiles, " + walls + " tiles with a wall, " + doors + " doors, " + (System.currentTimeMillis() - t0) / 1000 + " s";
@@ -375,6 +386,7 @@ public final class NavGrid implements StartupListener {
             byte[] g = grid.clone(); // review fix 4: the grid as read, without the multi-tile gates or the one-way walls (older code reads it as batch 20 did)
             for (java.util.Map.Entry<Integer, int[]> e : BIG_FOUND.entrySet()) if (e.getValue()[1] >= 0) g[e.getKey()] = (byte) e.getValue()[1];
             for (java.util.Map.Entry<Integer, int[]> e : ONE_RAW.entrySet()) g[e.getKey()] = (byte) e.getValue()[0];
+            NavLocked.restore(g, NavLocked.RAW); // w2 slayer bats: the file keeps the locked gate a door (RAW is empty with the flag off)
             d.write(g);
             // review fix 4: the trailer (older code stops reading before it): multi-tile gate tiles, then the one-way door tiles
             d.writeInt(TRAILER); d.writeInt(1);
@@ -403,6 +415,7 @@ public final class NavGrid implements StartupListener {
             else if (REACH_GATES && builtInGates() > 0) { System.out.println("[Nav] nav-p0.bin has no multi-tile gate record: " + BIG_FOUND.size() + " covered tiles from the built-in record (-Dreach.gates)"); applyTrailer(); } // P39 R4
             else System.out.println("[Nav] nav-p0.bin has no multi-tile gate record (saved before review fix 4): those gates stay walls until ::navbuild");
             try { closeOneWay(); } catch (Throwable t) { System.out.println("[Nav] one-way doors: " + t); } // batch 21 B9 (the static list: needs no record)
+            closeLocked(); // w2 slayer bats (-Dbots.slayer.batsFix; off = no-op)
             return true;
         } catch (Throwable t) { System.out.println("[Nav] load failed: " + t); return false; }
     }

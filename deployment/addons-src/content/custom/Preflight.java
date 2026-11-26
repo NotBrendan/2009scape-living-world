@@ -73,6 +73,13 @@ final class Preflight {
     }
 
     static final boolean ISLANDS_ON = !"false".equals(System.getProperty("preflight.islands"));
+    /** P81: a broke bot stranded in a pocket (493 live "no coins for a teleport" in 24 h, the GE booth island 3164,3488) takes the free home teleport, like a player. Default off. */
+    static final boolean STRAND_HOME = Boolean.getBoolean("nav.strandHome");
+    static boolean strandHome(Player bot, String why) {
+        if (!STRAND_HOME || !AfkTasks.Runner.homeTeleport(bot)) return false;
+        System.out.println("[Preflight] " + bot.getUsername() + " home teleport, broke and " + why + " (P81)");
+        return true;
+    }
     static final int ISLAND_MAX = 50_000; // tiles: the mainland region is ~285,000; Karamja's pieces, Morytania (~43,000) have their own rules
 
     /**
@@ -160,6 +167,7 @@ final class Preflight {
         if (str != null) { // batch 21: a paid teleport out, as a player would
             forget(bot);
             if (Ledger.Wallet.payTeleport(bot)) { tele(bot, target, "out (" + str + ")"); return Go.BUSY; }
+            if (strandHome(bot, str)) return Go.BUSY; // P81
             return Go.FAILED;
         }
         if (here.getY() > 6400) {

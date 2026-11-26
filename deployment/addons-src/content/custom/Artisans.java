@@ -124,6 +124,7 @@ public final class Artisans implements StartupListener {
         if (s < 0) return;
         int need = 1;
         for (Recipe r : RECIPES) if (t.name().equals(r.trade)) need = Math.max(need, r.level);
+        if (W13c.HERB_DRUIDIC && t == Trade.HERBLORE) System.out.println("[W13c] herbalist " + bot.getUsername() + " druidic=" + W13c.druidicDone(bot) + " (draft: still seeded; TODO QuestRunner)"); // W13 lane C (-Dartisans.herbDruidic), report only
         if (bot.getSkills().getStaticLevel(s) >= need) return;
         bot.getSkills().setStaticLevel(s, need); bot.getSkills().setLevel(s, need);
     }
@@ -151,6 +152,25 @@ public final class Artisans implements StartupListener {
     static synchronized org.json.simple.JSONObject takeSaved(Trade trade) {
         for (org.json.simple.JSONObject j : SAVED_ARTISANS) if (trade.name().equals(j.get("trade"))) { SAVED_ARTISANS.remove(j); return j; }
         return null;
+    }
+
+    /**
+     * W5b crafter2: the second crafter's first boot. No float is minted: coins move from the first crafter's bank (then pack)
+     * into the new crafter's bank, half the purse but never leaving it under 20k (W5bSkills.purseMove). Total coins unchanged.
+     * With no first crafter online, or 20k or less in its purse, the new crafter starts with nothing and waits for sales.
+     */
+    static void fundCrafter2(AIPlayer bot) {
+        AIPlayer first = null;
+        for (AIPlayer b : ARTISAN_BOTS) if (b != null && b != bot && b.isActive() && tradeOf(b) == Trade.CRAFTING) { first = b; break; }
+        if (first == null) { System.out.println("[Artisans] (W5b) crafter2 " + bot.getUsername() + " starts with 0 gp: no first crafter online to share a purse"); return; }
+        long bankA = first.getBank().getAmount(995), invA = first.getInventory().getAmount(995), before = bankA + invA + Ledger.Wallet.coins(bot);
+        long[] mv = W5bSkills.purseMove(bankA, invA, W5bSkills.CRAFT2_FLOOR);
+        long moved = 0;
+        if (mv[0] > 0 && first.getBank().remove(new Item(995, (int) mv[0]))) { if (bot.getBank().add(new Item(995, (int) mv[0]))) moved += mv[0]; else first.getBank().add(new Item(995, (int) mv[0])); }
+        if (mv[1] > 0 && first.getInventory().remove(new Item(995, (int) mv[1]))) { if (bot.getBank().add(new Item(995, (int) mv[1]))) moved += mv[1]; else first.getInventory().add(new Item(995, (int) mv[1])); }
+        long after = Ledger.Wallet.coins(first) + Ledger.Wallet.coins(bot);
+        System.out.println("[Artisans] (W5b) crafter2 " + bot.getUsername() + " gets " + moved + " gp from " + first.getUsername() + " (" + (bankA + invA) + " -> " + Ledger.Wallet.coins(first)
+                + " gp, floor " + W5bSkills.CRAFT2_FLOOR + "); total " + before + " -> " + after + (before == after ? "" : " MISMATCH"));
     }
 
     static void restoreArtisan(AIPlayer bot, org.json.simple.JSONObject j) {
@@ -195,6 +215,8 @@ public final class Artisans implements StartupListener {
     // Two of the busiest trades, one of the rest.
     static final Trade[] CREW = {Trade.SMITHING, Trade.SMITHING, Trade.SMELTING, Trade.SMELTING, Trade.FLETCHING, Trade.COOKING,
             Trade.HERBLORE, Trade.CRAFTING, Trade.RUNECRAFTING, Trade.COOKING, Trade.FLETCHING}; // audit E4: 14k raw fish and 20k logs needed a second cook and fletcher
+    /** W5b (-Dartisans.crafter2): one more crafter at the end of the crew; flag off: CREW itself. */
+    static final Trade[] CREW_RUN = W5bSkills.crew(W5bSkills.CRAFTER2, CREW, Trade.CRAFTING);
 
     @Override
     public void startup() {
@@ -206,10 +228,11 @@ public final class Artisans implements StartupListener {
             System.out.println("[Artisans] could not load recipes: " + t);
             return;
         }
-        int i = 0;
-        for (Trade trade : CREW) {
+        int i = 0, crafters = 0;
+        for (Trade trade : CREW_RUN) {
             long delay = FAST ? 5_000 + i * 1_000 : 60_000 + i * 20_000L;
             i++;
+            final int branch = trade == Trade.CRAFTING ? W5bSkills.branchFor(W5bSkills.CRAFTER2, crafters++) : W5bSkills.BRANCH_ALL; // W5b crafter2: first crafter leather, second gems (flag off: -1, every recipe)
             TIMER.schedule(new TimerTask() {
                 @Override
                 public void run() {
@@ -225,15 +248,17 @@ public final class Artisans implements StartupListener {
                                 if (bot == null && saved == null) bot = new SkillingBotAssembler().produce(SkillingBotAssembler.Wealth.AVERAGE, home);
                                 if (!back && saved != null) { bot = new SkillingBotAssembler().produce(SkillingBotAssembler.Wealth.AVERAGE, home); } // name couldn't be recreated: same craftsman under a new name
                                 if (saved != null) { Ledger.rename(String.valueOf(saved.get("name")), bot.getUsername()); restoreArtisan(bot, saved); } // same craftsman, same bank and coins (2026-10-20)
+                                else if (branch == W5bSkills.BRANCH_GEMS) fundCrafter2(bot); // W5b crafter2: no new coins; half the first crafter's purse moves over (branch 1 exists only with the flag on)
                                 else Ledger.Wallet.give(bot, 40_000 + RNG.nextInt(40_000)); // a new craftsman's float
-                                new GeneralBotCreator(new Artisan(trade, home), bot);
+                                Artisan script = new Artisan(trade, home); script.branch = branch; // W5b crafter2 (flag off: -1)
+                                new GeneralBotCreator(script, bot);
                                 ARTISAN_BOTS.add(bot);
                                 SmartAdventurers.finishTutorial(bot); // or their crafting XP is capped at 175
                                 seedTrade(bot, trade);
                                 TRADE_OF.put(bot.getUsername().toLowerCase(java.util.Locale.ROOT), trade);
                                 // Keep TradeModule from treating this bot as a DoublingMoney bot.
                                 AIRepository.getPulseRepository().remove(bot.getUsername().toLowerCase());
-                                System.out.println("[Artisans] " + bot.getUsername() + " opened shop as a " + trade.title);
+                                System.out.println("[Artisans] " + bot.getUsername() + " opened shop as a " + trade.title + (branch >= 0 ? " (" + W5bSkills.BRANCH_NAMES[branch] + " branch, W5b)" : ""));
                             } catch (Throwable t) {
                                 System.out.println("[Artisans] spawn failed: " + t);
                                 try { Failures.Life.loginFailed("artisan", null, t); } catch (Throwable ignored) { } // batch 19c §8.1
@@ -246,7 +271,7 @@ public final class Artisans implements StartupListener {
         }
         loadSaved();
         TIMER.schedule(new TimerTask() { public void run() { try { saveAll(); ServiceBots.saveAll(); } catch (Throwable t) { System.out.println("[Artisans] save failed: " + t); } } }, FAST ? 60_000 : 600_000, FAST ? 60_000 : 600_000);
-        System.out.println("[Artisans] " + RECIPES.size() + " recipes, " + CREW.length + " artisans scheduled" + (SAVED_ARTISANS.isEmpty() ? "" : ", " + SAVED_ARTISANS.size() + " coming back"));
+        System.out.println("[Artisans] " + RECIPES.size() + " recipes, " + CREW_RUN.length + " artisans scheduled" + (SAVED_ARTISANS.isEmpty() ? "" : ", " + SAVED_ARTISANS.size() + " coming back"));
     }
 
     static void loadRecipes() throws Exception {
@@ -309,6 +334,8 @@ public final class Artisans implements StartupListener {
         int v = value(id);
         int base = v < 50 ? 150 : v < 500 ? 200 : v < 5_000 ? 100 : v < 40_000 ? 40 : 12; // cheap stuff capped lower: 1,800 bronze bars helped nobody
         if (!active(id)) base = Math.min(base, 10); // nobody buys it: make a few for the shelf, not 200
+        base = W3Skills.arrowTarget(W3Skills.ARROW_FIX, id, base, W3Skills.ARROW_TARGET); // W3 fix 5 (-Dartisans.arrowFix): arrows bronze to adamant, two ranger trips (flag off: base)
+        base = W7cSkills.nailTarget(W7cSkills.PLANK_TYPES, id, base); // w22 (-Dbots.plankTypes): bronze, iron and steel nails kept at two packs (flag off: base; the shelf of 10 never covered one plain plank pack of 27)
         return base + MarketBrain.demandBoost(id, base);
     }
 
@@ -332,7 +359,10 @@ public final class Artisans implements StartupListener {
     static final Map<Integer, Integer> RESERVED = new HashMap<>();
     static long reservedAt;
 
-    static synchronized Plan choose(Trade trade, int skillLevel) {
+    static synchronized Plan choose(Trade trade, int skillLevel) { return choose(trade, skillLevel, W5bSkills.BRANCH_ALL); }
+
+    /** W5b crafter2: branch >= 0 plans only that crafting branch's recipes; -1 (every artisan with the flag off) plans all. */
+    static synchronized Plan choose(Trade trade, int skillLevel, int branch) {
         if (System.currentTimeMillis() - reservedAt > 30_000) RESERVED.clear();
         // The market brain's stock map (refreshed every 5 minutes) is good enough to plan from; buyInputs checks the real pile.
         Map<Integer, Integer> stock = new HashMap<>(MarketBrain.stock);
@@ -340,31 +370,57 @@ public final class Artisans implements StartupListener {
         for (Map.Entry<Integer, Integer> e : RESERVED.entrySet()) stock.merge(e.getKey(), -e.getValue(), Integer::sum);
         Plan best = null;
         if (System.currentTimeMillis() - shortSince > 600_000) { SHORT.clear(); shortSince = System.currentTimeMillis(); }
+        final boolean turn34 = W34Skills.SMITH_SMELT && trade == Trade.SMITHING && W34Skills.smithTurn(); // W34 (-Dartisans.smithSmelt): the smith's every 3rd plan puts a smelt batch first (a counter)
         for (Recipe r : RECIPES) {
+            if (W34Skills.SMITH_SMELT && trade == Trade.SMITHING && r.trade.equals(Trade.SMELTING.name())) { // W34: a smith may smelt when ore (in bars' worth) is above the bar stock and the bar is under target; no RNG draw, no SHORT entry
+                if (r.level > skillLevel || !tradeable(r.product)) continue;
+                int have34 = Math.max(0, stock.getOrDefault(r.product, 0)), want34 = target(r.product), sets34 = Integer.MAX_VALUE, free34 = Integer.MAX_VALUE;
+                for (int k = 0; k < r.inIds.length; k++) { int st = stock.getOrDefault(r.inIds[k], 0); sets34 = Math.min(sets34, st / r.inAmts[k]); free34 = Math.min(free34, (st - KEEP_INPUT) / r.inAmts[k]); }
+                int t34 = W34Skills.smeltTimes(have34, want34, sets34, free34);
+                if (t34 <= 0) continue;
+                double s34 = W34Skills.smeltScore(have34, want34, value(r.product), turn34);
+                if (best == null || s34 > best.score) { best = new Plan(); best.r = r; best.times = t34; best.score = s34; }
+                continue;
+            }
             if (!r.trade.equals(trade.name()) || r.level > skillLevel || !tradeable(r.product)) continue;
+            if (W5bSkills.branchSkips(branch, r.trade, r.inIds)) continue; // W5b crafter2: the other crafter's branch (branch -1 with the flag off: never)
             int have = stock.getOrDefault(r.product, 0);
             int want = target(r.product);
             boolean glut = false; for (int in : r.inIds) if (MarketBrain.isSurplus(in)) glut = true;
             if (glut && active(r.product)) want = Math.max(want, 2 * target(r.product)); // burn through a glut of inputs (consultant check Q1)
+            boolean rc2 = RcRun.LOOP2 && RcRun.secondRecipe(RcRun.ON, RcRun.LOOP2, RcRun.SECOND, r.product, r.inIds); // w20 (-Dartisans.altarLoop2, default off = false, nothing asked)
+            if (rc2) want = RcRun.secondWant(true, want, target(r.product));
             int owedQ = OWED_PRODUCTS.getOrDefault(r.product, 0); // a player is waiting for these: make them whatever the market says
             if (have >= want && owedQ == 0) continue;
             if (owedQ > 0) want = Math.max(want, have + owedQ);
             // How many batches the inputs allow without digging under KEEP_INPUT.
             int times = Math.min(28, (int) Math.ceil((want - have) / (double) r.amount));
             for (int k = 0; k < r.inIds.length; k++) {
-                int avail = stock.getOrDefault(r.inIds[k], 0) - KEEP_INPUT;
+                if (W3Skills.stapleFree(W3Skills.HERB_FIX, r.trade, r.inIds[k], STAPLES.contains(r.inIds[k]))) { W3Skills.stapleSkips++; continue; } // W3 fix 2 (-Dartisans.herbFix): buyInputs gets a staple from a shop, so it never limits a herblore plan
+                int avail = stock.getOrDefault(r.inIds[k], 0) - W3Skills.keep(r.trade, r.inIds[k], KEEP_INPUT); // W3 fix 2: herb chain goods are not held back (flags off: KEEP_INPUT)
+                if (W5bSkills.CRAFTER2) avail += KEEP_INPUT - W5bSkills.keep(r.trade, r.inIds[k], KEEP_INPUT); // W5b crafter2: crafting reserve 0 for half-made goods, 10 for uncut gems/dragonhide (other trades: + 0; W3 keep never touches crafting) // W3 fix 2: herb chain goods are not held back (flags off: KEEP_INPUT)
                 times = Math.min(times, avail / r.inAmts[k]);
                 if (avail < r.inAmts[k]) SHORT.merge(r.inIds[k], 1, Integer::sum); // this input is what the smiths are waiting on
             }
             if (times <= 0) continue;
             double gap = (want - have) / (double) want; // 1.0 = none at all
             double score = gap * gap * Math.log10(10 + value(r.product)) * (have == 0 ? 2 : 1) + RNG.nextDouble() * 0.2;
+            if (rc2) score += RcRun.secondLift(true); // w20: after the RNG draw above, so the draw order is the same
             if (owedQ > 0) score += 10; // the player's order first
             if (POTION_WANTS.getOrDefault(r.product, 0L) > System.currentTimeMillis() - 1_800_000) score += 8; // batch 15 item4: a hunter wanted these (ahead of the value weighting, behind a player's order)
             if (best == null || score > best.score) {
                 best = new Plan();
                 best.r = r; best.times = times; best.score = score;
             }
+        }
+        if (best == null && W3Skills.HERB_FIX && "herblore".equalsIgnoreCase(trade.name()) && W3Skills.herbIdleDue(System.currentTimeMillis())) { // W3 fix 2: says what the herbalist is short of, at most every 30 min
+            int g = 0, c = 0, u = 0; for (Map.Entry<Integer, Integer> e : stock.entrySet()) { if (W3Skills.grimy(e.getKey())) g += Math.max(0, e.getValue()); else if (W3Skills.cleanHerb(e.getKey())) c += Math.max(0, e.getValue()); else if (W3Skills.unfPotion(e.getKey())) u += Math.max(0, e.getValue()); }
+            System.out.println("[Artisans] herbalist idle: grimy=" + g + " clean=" + c + " unf=" + u + " vials=" + stock.getOrDefault(227, 0) + " newt=" + stock.getOrDefault(221, 0) + " limpwurt=" + stock.getOrDefault(225, 0) + " level=" + skillLevel);
+        }
+        if (best == null && W5bSkills.CRAFTER2 && "crafting".equalsIgnoreCase(trade.name()) && W5bSkills.craftIdleDue(branch, System.currentTimeMillis())) { // W5b crafter2: what the crafter is short of, at most every 30 min per branch
+            int uncut = 0, dhide = 0; for (int id : W5bSkills.CRAFT_RAW) { if (id >= 1747 && id <= 1753) dhide += Math.max(0, stock.getOrDefault(id, 0)); else uncut += Math.max(0, stock.getOrDefault(id, 0)); }
+            System.out.println("[Artisans] (W5b) crafter idle (" + (branch >= 0 ? W5bSkills.BRANCH_NAMES[branch] : "all") + "): uncut=" + uncut + " dhide=" + dhide + " cowhide=" + stock.getOrDefault(1739, 0) + " flax=" + stock.getOrDefault(1779, 0)
+                    + " gold=" + stock.getOrDefault(2357, 0) + " silver=" + stock.getOrDefault(2355, 0) + " glass=" + stock.getOrDefault(1775, 0) + " level=" + skillLevel);
         }
         return best;
     }
@@ -398,9 +454,11 @@ public final class Artisans implements StartupListener {
             if (need[k] <= 0) continue;
             int have;
             try { have = GrandExchange.Companion.getBotstockForId(plan.r.inIds[k]); } catch (Throwable t) { return false; }
-            if (have - KEEP_INPUT < need[k]) {
-                if (!STAPLES.contains(plan.r.inIds[k])) return false;
-                shop[k] = need[k] - Math.max(0, have - KEEP_INPUT);
+            int keepK = W3Skills.keep(plan.r.trade, plan.r.inIds[k], KEEP_INPUT); // W3 fix 2: 0 for herb chain goods with -Dartisans.herbFix, else KEEP_INPUT
+            if (W5bSkills.CRAFTER2) keepK = W5bSkills.keep(plan.r.trade, plan.r.inIds[k], keepK); // W5b crafter2: crafting reserve (other trades unchanged) // W3 fix 2: 0 for herb chain goods with -Dartisans.herbFix, else KEEP_INPUT
+            if (have - keepK < need[k]) {
+                if (!W3Skills.staple(plan.r.trade, plan.r.inIds[k], STAPLES.contains(plan.r.inIds[k]))) return false; // W3 fix 2: eye of newt is a shop staple for the herbalist
+                shop[k] = need[k] - Math.max(0, have - keepK);
                 if (Ledger.Wallet.coins(who) < cost + (long) Math.max(1, MarketBrain.value(plan.r.inIds[k])) * shop[k]) return false;
             }
         }
@@ -451,6 +509,7 @@ public final class Artisans implements StartupListener {
 
     static final class Artisan extends Script {
         final Trade trade;
+        int branch = W5bSkills.BRANCH_ALL; // W5b crafter2: the crafting branch this artisan plans (-1 = all, every artisan with the flag off)
         Location home;
         Location bankAt; int[] waitingFor; boolean bankSaid; long nextBankTrip; // audit E3
         Step step = Step.CHOOSE;
@@ -458,6 +517,7 @@ public final class Artisans implements StartupListener {
         java.util.concurrent.CompletableFuture<Plan> planning;
         long until, nextChat = System.currentTimeMillis() + 30_000, walkStart;
         int made;
+        RcRun rc; // W6 -Dartisans.altarLoop: the runecrafter's altar loop for this batch (null: the workshop path; always null with the flag off)
 
         Artisan(Trade trade, Location home) {
             this.trade = trade;
@@ -479,6 +539,7 @@ public final class Artisans implements StartupListener {
         public void tick() {
             if (bot == null || !bot.isActive()) return;
             long now = System.currentTimeMillis();
+            if (rc != null) { int rr = rc.tick(this, now); if (rr == RcRun.RUNNING) return; rc = null; Scen.rcEnd(bot); if (rr == RcRun.FALLBACK) { walkStart = now; step = Step.WALK; } else step = Step.CHOOSE; return; } // W6 altarLoop: a stall before the craft hands the batch to the workshop path below
             switch (step) {
                 case CHOOSE: {
                     // Scoring 470 recipes is done on a worker thread so the game tick never waits for it.
@@ -486,7 +547,7 @@ public final class Artisans implements StartupListener {
                         final java.util.concurrent.CompletableFuture<Plan> f = new java.util.concurrent.CompletableFuture<>();
                         planning = f;
                         final int lvl = skillOf(trade) >= 0 ? bot.getSkills().getStaticLevel(skillOf(trade)) : 99; // its real level (2026-10-20)
-                        PLANNER.execute(() -> { try { f.complete(choose(trade, lvl)); } catch (Throwable t) { f.complete(null); } });
+                        PLANNER.execute(() -> { try { f.complete(choose(trade, lvl, branch)); } catch (Throwable t) { f.complete(null); } });
                         return;
                     }
                     if (!planning.isDone()) return;
@@ -513,9 +574,11 @@ public final class Artisans implements StartupListener {
                         bought.append(plan.r.inAmts[k] * plan.times).append(" x ").append(new Item(plan.r.inIds[k]).getName());
                     }
                     System.out.println("[Artisans] " + bot.getUsername() + " bought " + bought + " to make " + plan.r.amount * plan.times + " x " + plan.r.name);
+                    if (W34Skills.SMITH_SMELT && trade == Trade.SMITHING && plan.r.trade.equals(Trade.SMELTING.name())) W34Skills.smithSmelts(bot.getUsername(), plan.r.amount * plan.times, plan.r.name); // W34: after the bought line, before the RNG draw below (no draw of its own)
                     home = trade.spots[RNG.nextInt(trade.spots.length)];
                     walkStart = now;
                     step = Step.WALK;
+                    if (RcRun.ON && trade == Trade.RUNECRAFTING) rc = RcRun.start(this, plan, now); if (rc != null) Scen.rcStart(bot); // W6 altarLoop; W8 scenario count (seed flags on only) (no Artisans.RNG draw; null = workshop path)
                     break;
                 }
                 case WALK: {
@@ -542,6 +605,7 @@ public final class Artisans implements StartupListener {
                     int forSale = Deals.settleOwed(bot, plan.r.product, plan.r.amount * plan.times); // splits first
                     if (forSale > 0) Ledger.supply(bot, plan.r.product, forSale);
                     made += plan.r.amount * plan.times;
+                    if (RcRun.ON && trade == Trade.RUNECRAFTING) RcRun.workshopRunes += plan.r.amount * plan.times; // W6 altarLoop: runes from the workshop path (fallbacks and off-table runes)
                     if (skillOf(trade) >= 0) try { bot.getSkills().addExperience(skillOf(trade), (10.0 + plan.r.level) * plan.times, true); } catch (Throwable ignored) { } // XP like anyone doing the work
                     System.out.println("[Artisans] " + bot.getUsername() + " put " + plan.r.amount * plan.times + " x " + plan.r.name + " on the GE");
                     if (plan.r.amount * plan.times >= 20) BotChat.news(String.format(BotChat.pick(

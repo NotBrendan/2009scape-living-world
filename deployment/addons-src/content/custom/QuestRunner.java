@@ -90,6 +90,7 @@ final class QuestRunner extends Pulse {
     }
 
     static QuestRunner start(Player bot, QuestScript s, int idx, boolean test) {
+        Bob.leave(bot, "busy"); // P86 hook 12
         QuestRunner old = ACTIVE.get(key(bot));
         if (old != null) old.stopHere(false); // clean up its step (talk lock, xp multiplier, boss lock), not just flag it
         AfkTasks.Runner r = AfkTasks.RUNNING.get(key(bot));
@@ -102,6 +103,7 @@ final class QuestRunner extends Pulse {
         BotChat.activity(bot, () -> q.doing());
         q.log("starts " + s.display + " at step " + idx + " (stage " + s.stage(bot) + ")");
         QuestBook.started(bot, s, idx);
+        if (QuestBook.RESUME && !test && idx == 0) QuestBook.onStart(bot, q); // hunt-b: was in QuestBook.resume() only, so a quest picked again after a park or a set-aside never got its items back and its first finished step wiped the saved list
         if (!test && idx == 0) startNews(bot, s); // batch 15 item1
         return q;
     }
@@ -156,7 +158,8 @@ final class QuestRunner extends Pulse {
     public boolean pulse() {
         if (over) return true;
         if (!bot.isActive()) { stopHere(false); return true; } // logged out: quests.json keeps the checkpoint
-        if (died()) { log("died at " + deathAt + ": stopping here, the grave run first"); stopHere(true); QuestBook.questDeath(bot, script); return true; } // audit 10-23 Q-20: counted; two in a day park the quest
+        if (died()) { log("died at " + deathAt + ": stopping here, the grave run first"); dead = true; stopHere(true); QuestBook.questDeath(bot, script); return true; } // audit 10-23 Q-20: counted; two in a day park the quest
+        if (KEEP_QUEST_ITEMS || QuestBook.RESUME) try { trackGot(); } catch (Throwable ignored) { } // p46 // quest1: also with -Dquest.resume
         long t0 = System.nanoTime(); // batch 19c B3 (design 8.2): this pulse's cost
         try { return step(); } catch (Throwable t) {
             log("error " + t);
@@ -226,6 +229,7 @@ final class QuestRunner extends Pulse {
             log("step " + idx + " " + s.name + " done in " + stepTicks + " ticks (stage " + stage() + ")");
             idx++;
             QuestBook.checkpoint(bot, script, idx);
+            if (QuestBook.RESUME) QuestBook.captureGot(bot, this); // quest1
             if (script.complete(bot)) { complete(); return true; }
             if (!test && shiftOver()) { log("shift over: stopping at step " + idx + ", back to it after the break"); stopHere(true); return true; }
             return false;
@@ -386,6 +390,7 @@ final class QuestRunner extends Pulse {
         bankCoins(bot);
         BotChat.clearActivity(bot);
         if (save) QuestBook.checkpoint(bot, script, idx);
+        if (QuestBook.RESUME && !dead) QuestBook.captureGot(bot, this); // quest1: what the run holds, for the resume bank pull (a death's empty pack never overwrites it)
         QuestBook.captureSoon(bot); // partial hand-ins (Fred's wool count) survive a logout
     }
 
@@ -426,12 +431,90 @@ final class QuestRunner extends Pulse {
         if (p.getInventory().freeSlots() >= slots) return;
         QuestRunner r = of(p);
         Set<Integer> keep = r != null ? r.keepIds() : new HashSet<>();
+        if (KEEP_QUEST_ITEMS || QuestBook.RESUME) { keepRoom(p, slots, keep, r != null ? r.got : java.util.Collections.<Integer>emptySet()); return; }
         for (Item it : p.getInventory().toArray()) {
             if (p.getInventory().freeSlots() >= slots) return;
             if (it == null || keep.contains(it.getId()) || it.getId() == 995) continue;
             Item copy = new Item(it.getId(), it.getAmount(), it.getCharge());
             if (p.getInventory().remove(copy)) { if (!p.getBank().add(copy)) p.getInventory().add(copy); }
         }
+    }
+
+    /**
+     * p46 (-Dquest.keepQuestItems, default off): makeRoom banked whatever was not a Collect/Gather/Buy/UseOn/Kill id, so items
+     * a quest makes by item-on-item or gets in dialogue (Prince Ali's blonde wig, Goblin Diplomacy's orange and blue mail) went
+     * to the bank before the step that needed them. With the flag: (1) ids that entered the pack during this run are banked
+     * last; (2) of the rest, the ids filling the most slots go first (logs, ore, loot), so a lone quest item carried into a
+     * resumed run goes last too; (3) a stackable item already in the pack needs no slot, one not yet there needs one (the
+     * 15-coin Collect asked makeRoom for 15 slots). Room is still made if only those items can give it, as before.
+     */
+    static final boolean KEEP_QUEST_ITEMS = Boolean.getBoolean("quest.keepQuestItems");
+    /**
+     * quest2 (-Dquest.fix2, default off; off = the quest1 behaviour): (1) collectIds and QuestBook.needs look inside a Guarded
+     * step, so keepIds and holdCount cover the items of guarded steps (the Black Knights' cabbage, Druidic Ritual's meats);
+     * (2) a UseOn whose item is not in the pack takes one from the bank before it fails (the ghost's skull, the cabbage).
+     */
+    static final boolean FIX2 = Boolean.getBoolean("quest.fix2");
+    /**
+     * quest3 (-Dquest.fix3, default off; off = the quest2 behaviour): the login hold of a quest's items (QuestBook.holdCount,
+     * asked by SmartAdventurers.restoreItems) (1) also covers a quest that is started and not finished but neither active nor
+     * parked (a 24 h park that ran out, a Shield of Arrav set-aside), and (2) is counted over the whole saved pack, so of an
+     * unstackable item (one saved pack entry a slot) no more than the hold count is kept.
+     */
+    static final boolean FIX3 = Boolean.getBoolean("quest.fix3");
+    /** p46: item ids that entered the pack during this run (coins aside); read by makeRoom with the flag. */
+    final Set<Integer> got = new HashSet<>();
+    Map<Integer, Integer> lastPack;
+    /** quest1: this run ended in a death (its pack is in a grave: the saved item list is left alone). */
+    boolean dead;
+
+    /** p46: notes ids whose pack count rose since the last pulse (flag on only). */
+    void trackGot() {
+        Map<Integer, Integer> now = new HashMap<>();
+        for (Item it : bot.getInventory().toArray()) if (it != null && it.getId() != 995) now.merge(it.getId(), it.getAmount(), Integer::sum);
+        if (lastPack != null) for (Map.Entry<Integer, Integer> e : now.entrySet()) if (e.getValue() > lastPack.getOrDefault(e.getKey(), 0)) got.add(e.getKey());
+        lastPack = now;
+    }
+
+    /** p46: the slots an item needs: a stackable one already in the pack none, else one; unstackable ones n (flag on only). */
+    static int slotsFor(Player p, int itemId, int n) {
+        if (!KEEP_QUEST_ITEMS || n <= 0) return n;
+        boolean stack;
+        try { stack = new Item(itemId).getDefinition().isStackable(); } catch (Throwable t) { return n; }
+        return !stack ? n : p.getInventory().getAmount(itemId) > 0 ? 0 : 1;
+    }
+
+    /** p46: makeRoom with the flag. Pass 1 skips this run's items and banks the most-slotted ids first; pass 2 is the old order. */
+    static void keepRoom(Player p, int slots, Set<Integer> keep, Set<Integer> got) {
+        java.util.List<Integer> ids = new java.util.ArrayList<>();
+        for (Item it : p.getInventory().toArray()) ids.add(it == null ? null : it.getId());
+        for (int id : bankOrder(ids, keep, got)) if (bankAll(p, id, slots)) return;
+        for (Item it : p.getInventory().toArray()) { // pass 2: as without the flag
+            if (p.getInventory().freeSlots() >= slots) return;
+            if (it == null || keep.contains(it.getId()) || it.getId() == 995) continue;
+            bankAll(p, it.getId(), slots);
+        }
+    }
+
+    /** p46: pass 1's order (pure, for the unit test): ids by pack slots taken, most first, ties in pack order; kept ids, coins and this run's items left out. */
+    static java.util.List<Integer> bankOrder(java.util.List<Integer> packIds, Set<Integer> keep, Set<Integer> got) {
+        Map<Integer, Integer> count = new java.util.LinkedHashMap<>();
+        for (Integer id : packIds) if (id != null) count.merge(id, 1, Integer::sum);
+        java.util.List<Integer> order = new java.util.ArrayList<>();
+        for (Integer id : count.keySet()) if (!keep.contains(id) && id != 995 && !got.contains(id)) order.add(id);
+        order.sort((a, b) -> count.get(b) - count.get(a)); // stable sort: equal counts keep pack order
+        return order;
+    }
+
+    /** p46: banks this id slot by slot until the pack has the room; true once it has. */
+    static boolean bankAll(Player p, int id, int slots) {
+        for (Item it : p.getInventory().toArray()) {
+            if (p.getInventory().freeSlots() >= slots) return true;
+            if (it == null || it.getId() != id) continue;
+            Item copy = new Item(it.getId(), it.getAmount(), it.getCharge());
+            if (p.getInventory().remove(copy)) { if (!p.getBank().add(copy)) p.getInventory().add(copy); }
+        }
+        return p.getInventory().freeSlots() >= slots;
     }
 
     Set<Integer> keepIds() {
@@ -448,6 +531,7 @@ final class QuestRunner extends Pulse {
     }
 
     static void collectIds(QuestSteps.Step s, Set<Integer> k) {
+        if (FIX2 && s instanceof QuestBlackKnightsFortress.Guarded) { collectIds(((QuestBlackKnightsFortress.Guarded) s).in, k); return; } // quest2
         if (s instanceof QuestSteps.Collect) { QuestSteps.Collect c = (QuestSteps.Collect) s; k.add(c.itemId); for (QuestSteps.Step x : c.plan) collectIds(x, k); if (c.buy != null) collectIds(c.buy, k); }
         else if (s instanceof QuestSteps.UseOn) k.add(((QuestSteps.UseOn) s).itemId);
         else if (s instanceof QuestSteps.Gather) k.add(((QuestSteps.Gather) s).itemId);

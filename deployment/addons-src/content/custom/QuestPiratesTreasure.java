@@ -80,6 +80,7 @@ final class QuestPiratesTreasure {
     static final Location WYDIN_FRONT = Location.create(3013, 3205, 0);   // in the shop, by the back door 2069 (3012,3204)
     static final Location WYDIN_DOOR_AT = Location.create(3012, 3204, 0);
     static final Location WYDIN_CRATE_AT = Location.create(3009, 3207, 0);
+    static final Location WYDIN_DOOR_IN = Location.create(3012, 3204, 0), WYDIN_DOOR_OUT = Location.create(3011, 3204, 0); // P72: shop side / back-room side of door 2069
     static final Location CHEST_AT = Location.create(3219, 3396, 1);
     static final Location CHEST_SIDE = Location.create(3220, 3396, 1);    // NOT verified walkable: the use-with paths the rest
     static final Location SARAH = Location.create(3039, 3292, 0);         // Sarah's Farming Shop (sells 952, shops.json 75), as QuestErnestTheChicken
@@ -94,7 +95,30 @@ final class QuestPiratesTreasure {
     static boolean rumBack(Player p) { return s20(p) || has(RUM, 1).test(p) && !onKaramja(p) && !attr(p, "stashed-rum") && !attr(p, "wydin-rum"); }
     static boolean paid(Player p) { return attr(p, "wydin-rum") || rumBack(p); }
     static boolean stashed(Player p) { return attr(p, "stashed-rum") || paid(p); }
-    static boolean hired(Player p) { try { return p.getSavedData().getGlobalData().isLuthasTask() || stashed(p); } catch (Throwable t) { return stashed(p); } }
+    static boolean hired(Player p) { if (FIX) return luthasTask(p) || paid(p); try { return p.getSavedData().getGlobalData().isLuthasTask() || stashed(p); } catch (Throwable t) { return stashed(p); } }
+    static boolean luthasTask(Player p) { try { return p.getSavedData().getGlobalData().isLuthasTask(); } catch (Throwable t) { return false; } }
+    /**
+     * P50 -Dquest.piratesFix (default off). "Fill" on crate 2072 (KaramjaBananaCrateListener) answers "I don't know what
+     * goes in there." without GlobalData.luthasTask and does nothing at all with no bananas in the pack. Live bots reach
+     * step 12 with steps 7-10 skipped as done because hired() counted the stashed rum as the job, so a bot with
+     * "stashed-rum" but no luthasTask clicked the crate five times twice and abandoned (18 fails/24 h, 0 fills). With
+     * the flag hired() needs the job itself (or the payment), so the bot asks Luthas again, and a check before the fill
+     * logs the job / pack / crate counts and fails clearly when the pack has no bananas.
+     */
+    static final boolean FIX = Boolean.getBoolean("quest.piratesFix");
+
+    /** P50: before the fill (flag on): the job, the bananas in the pack, the crate; FAILED with a reason the fill can't succeed. */
+    static QuestSteps.Step fillCheck() {
+        return new QuestSteps.Custom("check the job and the bananas", 5, r -> { }, r -> {
+            Player p = r.bot;
+            int pack = p.getInventory().getAmount(BANANA);
+            r.log("  crate: job " + luthasTask(p) + ", bananas in pack " + pack + ", in crate " + inCrate(p) + ", stashed " + attr(p, "stashed-rum"));
+            if (crateFull(p)) return QuestSteps.St.DONE;
+            if (!luthasTask(p)) { r.log("  no job from Luthas: Fill won't take bananas"); return QuestSteps.St.FAILED; }
+            if (pack <= 0) { r.log("  no bananas in the pack"); return QuestSteps.St.FAILED; }
+            return QuestSteps.St.DONE;
+        });
+    }
     static int inCrate(Player p) { try { return p.getSavedData().getGlobalData().getKaramjaBananas(); } catch (Throwable t) { return 0; } }
     static boolean crateFull(Player p) { return inCrate(p) >= 10 || paid(p); }
     static boolean inShop(Player p) { Location l = p.getLocation(); return l.getZ() == 0 && l.getX() >= 3012 && l.getX() <= 3016 && l.getY() >= 3204 && l.getY() <= 3210; }
@@ -166,6 +190,35 @@ final class QuestPiratesTreasure {
         if (old != null && old.getId() != APRON) p.setAttribute(OLD_BODY, old.getId());
         if (equip(p, APRON)) { r.log("  wearing the white apron" + (old != null ? " (took off " + MarketBrain.name(old.getId()) + ")" : "")); return QuestSteps.St.DONE; }
         return QuestSteps.St.FAILED;
+    }
+
+    /**
+     * P72 (-Dquest.piratesFix): live 11-13..15 "through Wydin's back door: Open on [2069] didn't do it (5 clicks)", every
+     * click ending at 3012,3202 outside the shop. The step goes as doorFromRoom does in QuestShieldOfArrav: the door's own
+     * approach tile (DoorActionHandler.getDestination), then what WydinDoorPlugin runs for a worn apron
+     * (DoorActionHandler.handleAutowalkDoor). in = into the back room, else back out to the shop.
+     */
+    static QuestSteps.Step wydinDoor(String name, boolean in) {
+        final QuestSteps.Mover m = new QuestSteps.Mover();
+        final int[] st = {0, 0};
+        final Location[] at = {null};
+        java.util.function.Predicate<Player> there = in ? p -> rumBack(p) && !inBackRoom(p) || inBackRoom(p) : p -> !inBackRoom(p);
+        return new QuestSteps.Custom(name, 300, r -> { at[0] = null; st[0] = 0; st[1] = 0; }, r -> {
+            Player p = r.bot;
+            if (there.test(p)) return QuestSteps.St.DONE;
+            if (st[0] > 0) { st[0]--; return QuestSteps.St.RUNNING; }
+            if (!wearingApron(p)) { r.log("  no white apron worn: Wydin won't let me through"); return QuestSteps.St.FAILED; }
+            core.game.node.scenery.Scenery d = QuestSteps.findScenery(p, WYDIN_DOOR_AT, 1, new int[]{WYDIN_DOOR}, null, null);
+            if (d == null) { r.log("  no door 2069 by " + WYDIN_DOOR_AT); return QuestSteps.St.FAILED; }
+            Location stand = in ? WYDIN_DOOR_IN : WYDIN_DOOR_OUT;
+            if (at[0] == null) { at[0] = stand; m.reset(stand, 0); r.log("  door 2069@" + d.getLocation() + " rot " + d.getRotation() + " type " + d.getType() + ": from " + stand + ", engine dest " + core.game.global.action.DoorActionHandler.getDestination(p, d)); }
+            Location l = p.getLocation();
+            if (!l.equals(stand)) { QuestSteps.St s = m.tick(p); if (s == QuestSteps.St.FAILED) { r.log("  can't reach " + stand + " from " + l + " (" + m.last + ")"); return QuestSteps.St.FAILED; } return QuestSteps.St.RUNNING; }
+            if (++st[1] > 6) { r.log("  the door didn't take me through, at " + l); return QuestSteps.St.FAILED; }
+            core.game.global.action.DoorActionHandler.handleAutowalkDoor(p, d);
+            st[0] = 4;
+            return QuestSteps.St.RUNNING;
+        }).done(there);
     }
 
     static QuestSteps.St oldBodyBack(QuestRunner r) {
@@ -286,8 +339,9 @@ final class QuestPiratesTreasure {
 
         // ten bananas on top
         s.step(new QuestSteps.Collect("get bananas for the crate", BANANA, 10).count(p -> Math.max(1, 10 - inCrate(p))).stock()
-                .then(new QuestSteps.Gather("pick bananas", AfkTasks.Task.FLAX, BANANA, 10, PLANTATION).count(p -> Math.max(1, 10 - inCrate(p))).targets("Banana Tree").products(BANANA))
+                .then(new QuestSteps.Gather("pick bananas", AfkTasks.Task.FLAX, BANANA, 10, PLANTATION).count(p -> Math.max(1, 10 - inCrate(p))).targets("Banana Tree").products(BANANA).retries(FIX ? 3 : 0)) // P72: live runners stopped at 9/10
                 .done(p -> crateFull(p) || has(BANANA, Math.max(1, 10 - inCrate(p))).test(p)));
+        if (FIX) s.step(fillCheck().done(QuestPiratesTreasure::crateFull));
         s.step(new QuestSteps.Interact("fill the crate with bananas", new int[]{BANANA_CRATE}, null, "Fill", CRATE_AT, 4, false).until(QuestPiratesTreasure::crateFull).done(QuestPiratesTreasure::crateFull));
         s.step(new QuestSteps.Walk("back to Luthas", LUTHAS_AT, 3).done(p -> paid(p) || p.getLocation().getZ() == 0 && p.getLocation().getDistance(LUTHAS_AT) <= 3));
         s.step(new QuestSteps.Talk("tell Luthas the crate is full", new int[]{LUTHAS}).until(QuestPiratesTreasure::paid).done(QuestPiratesTreasure::paid));
@@ -308,10 +362,12 @@ final class QuestPiratesTreasure {
         // Live 10-23: bots coming from the south stopped outside the shop's south wall ("close enough") and the back-door click
         // couldn't path. The shop (x 3012-3016, y 3204-3210, cache map) is entered by its east door 40108 at 3017,3206.
         s.step(QuestErnestTheChicken.intoRoom("walk into Wydin's food store", WYDIN_FRONT, p -> inShop(p) || inBackRoom(p)).done(p -> rumBack(p) || inBackRoom(p) || inShop(p)));
-        s.step(new QuestSteps.Interact("through Wydin's back door", new int[]{WYDIN_DOOR}, null, "Open", WYDIN_DOOR_AT, 3, false).until(QuestPiratesTreasure::inBackRoom).done(p -> rumBack(p) || inBackRoom(p)));
+        s.step(FIX ? wydinDoor("through Wydin's back door", true).done(p -> rumBack(p) || inBackRoom(p)) // P72
+                : new QuestSteps.Interact("through Wydin's back door", new int[]{WYDIN_DOOR}, null, "Open", WYDIN_DOOR_AT, 3, false).until(QuestPiratesTreasure::inBackRoom).done(p -> rumBack(p) || inBackRoom(p)));
         s.step(makeRoom("make room for the rum", 1).done(QuestPiratesTreasure::rumBack));
         s.step(new QuestSteps.Interact("search the banana crate for the rum", new int[]{WYDIN_CRATE}, null, "Search", WYDIN_CRATE_AT, 3, false).until(QuestPiratesTreasure::rumBack).done(QuestPiratesTreasure::rumBack));
-        s.step(new QuestSteps.Interact("back out through Wydin's door", new int[]{WYDIN_DOOR}, null, "Open", WYDIN_DOOR_AT, 3, false).until(p -> !inBackRoom(p)).done(p -> !inBackRoom(p)));
+        s.step(FIX ? wydinDoor("back out through Wydin's door", false) // P72
+                : new QuestSteps.Interact("back out through Wydin's door", new int[]{WYDIN_DOOR}, null, "Open", WYDIN_DOOR_AT, 3, false).until(p -> !inBackRoom(p)).done(p -> !inBackRoom(p)));
         s.step(new QuestSteps.Custom("take the apron off", 20, null, QuestPiratesTreasure::oldBodyBack).done(p -> attrInt(p, OLD_BODY) == 0));
 
         // the rum to Frank, the key back

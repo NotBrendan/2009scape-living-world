@@ -51,8 +51,7 @@ public final class Companions implements StartupListener {
     static boolean human(Player p) { return p != null && (!p.isArtificial() || TEST_HUMANS.contains(key(p))); }
 
     static boolean idle(SmartAdventurers.Brain br) {
-        return br != null && br.bot != null && br.bot.isActive() && br.runner == null && br.shopAt == null && !br.delivering && br.graveAt == null
-                && br.mill == 0 && br.agiStep < 0 && br.companion == null && br.errandFor == null && !AfkTasks.RUNNING.containsKey(key(br.bot))
+        return br != null && br.bot != null && br.bot.isActive() && br.runner == null && !br.errandNoStar() && br.companion == null && br.errandFor == null && !AfkTasks.RUNNING.containsKey(key(br.bot))
                 && !PlayerTrades.SESSIONS.containsKey(br.bot) && !Deals.involved(br.bot) && !QuestRunner.active(br.bot); // a questing bot is busy (audit 10-22)
     }
 
@@ -474,7 +473,7 @@ public final class Companions implements StartupListener {
             for (SmartAdventurers.Brain br : SmartAdventurers.BRAINS.values()) {
                 if (br.bot == null || !br.bot.isActive() || br.bot == tH || br.bot == tB || br.bot == tC) continue;
                 if (!idle(br)) { // trials only: a bot on a shop walk (no runner) is pulled off it; the fast test world keeps them walking to shops for minutes
-                    if (br.runner != null || br.delivering || br.graveAt != null || br.mill != 0 || br.agiStep >= 0 || br.companion != null || br.errandFor != null || AfkTasks.RUNNING.containsKey(key(br.bot)) || PlayerTrades.SESSIONS.containsKey(br.bot)) continue;
+                    if (br.runner != null || br.delivering || br.graveAt != null || br.mill != 0 || br.bone != 0 || br.summon != 0 || br.farm != 0 || br.slay != 0 || br.agiStep >= 0 || br.companion != null || br.errandFor != null || AfkTasks.RUNNING.containsKey(key(br.bot)) || PlayerTrades.SESSIONS.containsKey(br.bot)) continue;
                     br.shopAt = null; br.pendingJob = null; br.shopName = null;
                 }
                 if (tH == null) { tH = br.bot; TEST_HUMANS.add(key(tH)); } else if (tB == null) tB = br.bot; else if (tC == null) tC = br.bot; else break;
@@ -487,7 +486,7 @@ public final class Companions implements StartupListener {
             three.sort((a, b) -> Integer.compare(a.getProperties().getCurrentCombatLevel(), b.getProperties().getCurrentCombatLevel()));
             TEST_HUMANS.remove(key(tH)); tH = three.get(0); tC = three.get(1); tB = three.get(2); TEST_HUMANS.add(key(tH));
             Location at = tH.getLocation();
-            tB.getProperties().setTeleportLocation(at.transform(1, 0, 0)); tC.getProperties().setTeleportLocation(at.transform(0, 1, 0));
+            Bob.tele(tB).getProperties().setTeleportLocation(at.transform(1, 0, 0)); Bob.tele(tC).getProperties().setTeleportLocation(at.transform(0, 1, 0));
             System.out.println("[CompTest] stand-in " + tH.getUsername() + " (cb " + tH.getProperties().getCurrentCombatLevel() + ") at " + at + "; bots B " + tB.getUsername() + " (cb " + tB.getProperties().getCurrentCombatLevel() + "), C " + tC.getUsername() + " (cb " + tC.getProperties().getCurrentCombatLevel() + ")");
             phase = 1; phaseAt = now + 4_000; return false;
         }
@@ -499,7 +498,7 @@ public final class Companions implements StartupListener {
             case 2: {
                 Crew c = CREWS.get(key(tH));
                 System.out.println("[CompTest] crew: " + (c == null ? "none" : c.bots.size() + " bots") + "; " + tB.getUsername() + " companion=" + (bB.companion != null) + " dist=" + tB.getLocation().getDistance(tH.getLocation()) + " pack=" + tB.getInventory().itemCount());
-                tH.getProperties().setTeleportLocation(tH.getLocation().transform(6, 0, 0)); // the player moves on: the crew should follow
+                Bob.tele(tH).getProperties().setTeleportLocation(tH.getLocation().transform(6, 0, 0)); // the player moves on: the crew should follow
                 phaseAt = now + 8_000; break;
             }
             case 3: System.out.println("[CompTest] after the move: dist=" + tB.getLocation().getDistance(tH.getLocation()) + " moving=" + tB.getWalkingQueue().isMoving()); System.out.println("[CompTest] 'disband' -> " + chat(tB, tH, "thanks lads, disband", true) + "; crews now " + CREWS.size() + ", companion=" + (bB.companion != null)); phaseAt = now + 4_000; break;

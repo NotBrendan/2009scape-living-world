@@ -19,7 +19,7 @@ public final class BotPrices {
                 int g = PriceIndex.INSTANCE.getValue(id);
                 // audit 10-23 X-4: never under the bot buyer's reference (70-150% of the base). Alts trading at 1 gp pushed the guide
                 // down, bought bot stock at 1.1 x that and sold it back to the bot buyer at 0.9 x botRef: about +14% a loop.
-                int ref = 0; try { ref = content.custom.MarketBrain.botRefFor(id); } catch (Throwable ignored) { }
+                int ref = 0; try { ref = content.custom.MarketBrain.botFloorFor(id); } catch (Throwable ignored) { }
                 if (g > 0 || ref > 0) return Math.max(g, ref);
             } catch (Throwable ignored) { }
             try { return ItemDefinition.forId(id).getValue(); } catch (Throwable t) { return 1; }

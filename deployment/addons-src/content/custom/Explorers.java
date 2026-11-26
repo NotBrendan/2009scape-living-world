@@ -275,7 +275,7 @@ public final class Explorers implements StartupListener {
                 System.out.println("[Explore] " + bot.getUsername() + " (agility " + agility + ") retired: nothing left to test for me (" + settled + " settled or tested this week, " + gated + " behind levels, quests or items for me, " + skipped + " unreachable for now; " + done + " tested this time)");
                 TUNNELS_RETIRED.incrementAndGet();
                 BotChat.clearActivity(bot);
-                try { ((AIPlayer) bot).clear(); } catch (Throwable t) { System.out.println("[Explore] could not retire " + bot.getUsername() + ": " + t); }
+                try { Bob.leave(bot, "retire"); } catch (Throwable ignored) { } try { ((AIPlayer) bot).clear(); } catch (Throwable t) { System.out.println("[Explore] could not retire " + bot.getUsername() + ": " + t); }
                 nextThink = Long.MAX_VALUE;
                 return;
             }
@@ -412,7 +412,7 @@ public final class Explorers implements StartupListener {
             System.out.println("[Explore] " + bot.getUsername() + " retired: nothing new to record at " + sitesSinceRecord + " " + (stairs ? "stair" : "door") + " sites (" + records + " recorded this time" + (stairs ? "" : "; " + DOOR_STAMP.size() + " doors/gates settled or recorded") + ")");
             if (!stairs) DOORS_RETIRED.incrementAndGet(); // batch 18 rc3: for the trial
             BotChat.clearActivity(bot);
-            try { ((AIPlayer) bot).clear(); } catch (Throwable t) { System.out.println("[Explore] could not retire " + bot.getUsername() + ": " + t); }
+            try { Bob.leave(bot, "retire"); } catch (Throwable ignored) { } try { ((AIPlayer) bot).clear(); } catch (Throwable t) { System.out.println("[Explore] could not retire " + bot.getUsername() + ": " + t); }
         }
 
         Explorer(boolean stairs, int idx) { this.stairs = stairs; this.site = idx; }

@@ -78,6 +78,7 @@ public final class AfkTasks implements StartupListener {
     };
     /** audit 10-23 A-11: starts a runner's walk, then stores and submits it only if the walk didn't end it (a toll, a gate, a fare). */
     static boolean launch(Runner r, State s, Location where) {
+        Bob.leave(r.p, "runner"); // P86 S5: any new trip ends a fun walk
         if (!r.goTo(s, where) || r.halted) return false;
         RUNNING.put(key(r.p), r);
         GameWorld.getPulser().submit(r);
@@ -85,7 +86,7 @@ public final class AfkTasks implements StartupListener {
     }
     static final boolean DEBUG = Boolean.getBoolean("afk.debug");
 
-    enum Kind { TREE, ROCK, FISH, PICK, THIEVE, FIGHT, GROUND, SMELT, BANK } // BANK: batch 23 T4, a process fed from the bank (players only)
+    enum Kind { TREE, ROCK, FISH, PICK, THIEVE, FIGHT, GROUND, SMELT, BANK, STALL } // STALL: P61, players only (products null keeps the bots off them) // BANK: batch 23 T4, a process fed from the bank (players only)
 
     static final int[] AXES = {1351, 1349, 1353, 1361, 1355, 1357, 1359, 6739};
     static final int[] PICKAXES = {1265, 1267, 1269, 1273, 1271, 1275, 15259};
@@ -118,6 +119,7 @@ public final class AfkTasks implements StartupListener {
         RUNITE("runite", "Runite", Kind.ROCK, null, "Mine", ids(451), PICKAXES),
         // Fishing (target is the spot option)
         NET("net", "Shrimp/anchovies", Kind.FISH, names("Fishing spot"), "Net", ids(317, 321), ids(303)),
+        BIG_NET("bignet", "Mackerel/cod/bass (big net)", Kind.FISH, names("Fishing spot"), "Net", ids(353, 341, 363, 401), ids(305)), // P76 D3: the Net/Harpoon spots (npc ids BIGNET_SPOTS), Fishing 16
         BAIT("bait", "Sardine/herring/pike", Kind.FISH, names("Fishing spot"), "Bait", ids(327, 345, 349), ids(307)),
         LURE("lure", "Trout/salmon", Kind.FISH, names("Fishing spot"), "Lure", ids(335, 331), ids(309)),
         CAGE("cage", "Lobster", Kind.FISH, names("Fishing spot"), "Cage", ids(377), ids(301)),
@@ -173,7 +175,19 @@ public final class AfkTasks implements StartupListener {
         GROUND_ANY("c_ground", "Anything lying around (respawning items)", Kind.GROUND, null, null, null, null),
         // batch 23 T4 (design 2.2): the bank loop of a Process (smith, cook, fletch, burn, spin, bury from the bank). Players only:
         // products null keeps it out of the bots' jobs (SmartAdventurers.JOBS) and the market catalogues (MarketBrain).
-        BANK_LOOP("from_bank", "Processing from the bank", Kind.BANK, null, null, null, null);
+        BANK_LOOP("from_bank", "Processing from the bank", Kind.BANK, null, null, null, null),
+        // P61 thieving stalls (players only): products null keeps them out of SmartAdventurers.JOBS and MarketBrain; a player's
+        // run counts STALL_LOOT (Runner.productsOverride) and finds the stall by STALL_IDS. Stealing is the server's own
+        // ThievingOptionPlugin -> StallThiefPulse (Stall enum levels: baker 5, silk 20, seed 27, fur 35, silver 50, gem 75).
+        ST_BAKER("stall_baker", "Baker's stall (Ardougne)", Kind.STALL, null, "Steal-from", null, null),
+        ST_SILK("stall_silk", "Silk stall (Ardougne)", Kind.STALL, null, "Steal-from", null, null),
+        ST_FUR("stall_fur", "Fur stall (Ardougne)", Kind.STALL, null, "Steal-from", null, null),
+        ST_SILVER("stall_silver", "Silver stall (Ardougne)", Kind.STALL, null, "Steal-from", null, null),
+        ST_GEM("stall_gem", "Gem stall (Ardougne)", Kind.STALL, null, "Steal-from", null, null),
+        ST_SEED("stall_seed", "Seed stall (Draynor)", Kind.STALL, null, "Steal-from", null, null),
+        // W7c (-Dbots.thieve.ardy): bots only (never in the players' ::afk words or lists); flag off: products null, so no bot job and no market entry either
+        MASTER_FARMER(W7cSkills.KEY_MASTER, "Master farmers", Kind.THIEVE, names("Master Farmer"), "Pickpocket", W7cSkills.ardyProducts(W7cSkills.THIEVE_ARDY, W7cSkills.KEY_MASTER, W7cSkills.MASTER_LOOT), null),
+        KNIGHT(W7cSkills.KEY_KNIGHT, "Knights of Ardougne", Kind.THIEVE, names("Knight of Ardougne"), "Pickpocket", W7cSkills.ardyProducts(W7cSkills.THIEVE_ARDY, W7cSkills.KEY_KNIGHT, ids(COINS)), null);
 
         final String key, label, option;
         final Kind kind;
@@ -182,11 +196,12 @@ public final class AfkTasks implements StartupListener {
 
         Task(String key, String label, Kind kind, String[] targets, String option, int[] products, int[] tools) {
             this.key = key; this.label = label; this.kind = kind; this.targets = targets;
-            this.option = option; this.products = products; this.tools = tools;
+            this.option = option; this.tools = tools;
+            this.products = products == null && kind == Kind.STALL ? W5bSkills.stallProducts(W5bSkills.STALLS, key) : products; // W5b (-Dbots.thieve.stalls): the baker's and silk stalls get their engine loot, which lets bots take them as jobs (flag off: null, players only)
         }
 
         static Task byKey(String key) {
-            for (Task t : values()) if (t.key.equalsIgnoreCase(key)) return t;
+            for (Task t : values()) if (t.key.equalsIgnoreCase(key) && !W7cSkills.ardyKey(t.key)) return t; // W7c: the bots-only jobs have no player key
             return null;
         }
     }
@@ -194,6 +209,34 @@ public final class AfkTasks implements StartupListener {
     static String[] names(String... n) { return n; }
     static int[] ids(int... i) { return i; }
     static boolean has(int[] a, int v) { if (a != null) for (int x : a) if (x == v) return true; return false; }
+
+    /**
+     * P61 (players only): what a player's run counts and loots where task.products can't say it without changing the bots
+     * (SmartAdventurers.JOBS and MarketBrain read task.products). Rock crabs (drop_tables.json 1265/1267, no bones): coins,
+     * oysters, runes, ores, herbs and seeds. Stalls (Stall enum rewards, javap-checked against server.jar): the stall's loot.
+     */
+    static final int[] CRAB_LOOT = {COINS, 407, 554, 561, 562, 440, 453, 436, 438, 207, 211, 5293, 5295, 5297};
+    static final Map<Task, int[]> STALL_LOOT = new HashMap<>(), STALL_IDS = new HashMap<>();
+    static {
+        STALL_LOOT.put(Task.ST_BAKER, ids(1891, 2309, 1901)); STALL_IDS.put(Task.ST_BAKER, ids(34384, 2561, 6163));
+        STALL_LOOT.put(Task.ST_SILK, ids(950)); STALL_IDS.put(Task.ST_SILK, ids(34383, 2560));
+        STALL_LOOT.put(Task.ST_SEED, ids(5096, 5097, 5101, 5318, 5319, 5324)); STALL_IDS.put(Task.ST_SEED, ids(7053)); // P61 test dump: Ardougne market 343xx (in Stall's idMap), Draynor 7053 at 3075,3249 and 3079,3253
+        STALL_LOOT.put(Task.ST_FUR, ids(6814, 958)); STALL_IDS.put(Task.ST_FUR, ids(34387, 2563, 4278));
+        STALL_LOOT.put(Task.ST_SILVER, ids(442)); STALL_IDS.put(Task.ST_SILVER, ids(34382, 2565, 6164));
+        STALL_LOOT.put(Task.ST_GEM, ids(1623, 1605, 1603, 1601)); STALL_IDS.put(Task.ST_GEM, ids(34385, 2562, 6162));
+    }
+    /** P61: a runite rock (MiningNode reward 451) within 16 tiles, so a player standing at one may still start ::afk runite there. */
+    static boolean runiteNear(Location c) {
+        if (c == null) return false;
+        for (int dx = -16; dx <= 16; dx++) for (int dy = -16; dy <= 16; dy++) {
+            Scenery s = RegionManager.getObject(c.getZ(), c.getX() + dx, c.getY() + dy);
+            if (s == null) continue;
+            MiningNode m = MiningNode.forId(s.getId());
+            if (m != null && m.getReward() == 451) return true;
+        }
+        return false;
+    }
+    static int[] playerProducts(Task t) { return t == Task.ROCK_CRAB ? CRAB_LOOT : STALL_LOOT.get(t); }
 
     /** Banks a player can walk to, as the tile in front of the booths. Lumbridge's is upstairs, so it is left out. */
     /** Tile in front of each furnace; Al Kharid's is behind the toll gate. */
@@ -210,6 +253,9 @@ public final class AfkTasks implements StartupListener {
     }
 
     static Spot sp(String n, int x, int y) { return new Spot(n, x, y); }
+
+    /** P76 D3: fishing spot npc ids whose "Net" option is the big net (FishingSpot.NET_HARPOON); the small-net spots share the option name. */
+    static final int[] BIGNET_SPOTS = {313, 322, 334, 406, 1191, 1333, 1405, 1406, 3574, 3575, 5471, 7044};
 
     /** Chaos druids have no fixed spot in the table: take the surface spot the hunt map found from the spawn data. */
     static void ensureHerbSpots() {
@@ -235,6 +281,7 @@ public final class AfkTasks implements StartupListener {
             POTATO_F = sp("the potato field", 3146, 3285), ONION_F = sp("the onion patch by the Lumbridge farm", 3189, 3268),
             SHEEP_F = sp("the Lumbridge sheep pen", 3200, 3266), EGG_F = sp("the Lumbridge chicken farm", 3229, 3299),
             VARROCK_GUARDS = sp("Varrock square", 3213, 3424), DRAY_MARKET = sp("Draynor market", 3080, 3250),
+            CATH_BIGNET = sp("the Catherby big-net spots", 2852, 3426), // P76 D3: npc 313 spawns at 2853,3423 (npc_spawns.json); 2852,3426 is a reachable tile 3 away (p38-navport from the Catherby bank)
             KARA_MINE = sp("the Karamja mine south of Brimhaven", 2846, 3034); // gold, mithril and adamantite in the jungle
 
     static final Map<Task, Spot[]> SPOTS = new HashMap<>();
@@ -255,8 +302,10 @@ public final class AfkTasks implements StartupListener {
         SPOTS.put(Task.MAPLE, new Spot[]{SEERS_MAPLE});
         SPOTS.put(Task.YEW, new Spot[]{EDGE_YEW, FALA_YEW});
         SPOTS.put(Task.MAGIC, new Spot[]{SEERS_MAGIC});
+        if (W13aSkills.TREES2) try { W13aHooks.trees2(SPOTS); } catch (Throwable t) { System.out.println("[W13a] trees2 spots skipped: " + t); } // W13a (-Dbots.wc.trees2): more willow / yew spots
         SPOTS.put(Task.BEST_TREE, new Spot[]{DRAY, LUMTREES});
         SPOTS.put(Task.NET, new Spot[]{DRAY_FISH}); // pathing review 10-23 T-2: not Catherby (a small-net runner there caught nothing in 3 minutes on the trial server; cause not found)
+        SPOTS.put(Task.BIG_NET, new Spot[]{CATH_BIGNET}); // P76 D3
         SPOTS.put(Task.BAIT, new Spot[]{DRAY_FISH, CATH_NET}); // pathing review 10-23 T-2: Catherby too (Draynor was the only one, ~240 tiles from a Catherby fisher; 19 fish in 3 minutes there on the trial server)
         SPOTS.put(Task.LURE, new Spot[]{BARB_FISH, LUM_FISH});
         SPOTS.put(Task.CAGE, new Spot[]{CATH_FISH});
@@ -272,6 +321,10 @@ public final class AfkTasks implements StartupListener {
         SPOTS.put(Task.WIZ_RUNES, new Spot[]{DARK_WIZ});
         SPOTS.put(Task.F_GUARD, new Spot[]{VARROCK_GUARDS});
         SPOTS.put(Task.GUARD, new Spot[]{VARROCK_GUARDS});
+        if (W7cSkills.THIEVE_ARDY) { // W7c (-Dbots.thieve.ardy): routes planned offline (p38-navport) from both Ardougne banks, no doors on any
+            SPOTS.put(Task.MASTER_FARMER, new Spot[]{sp("the north Ardougne farmer", 2636, 3362)});
+            SPOTS.put(Task.KNIGHT, new Spot[]{sp("the Ardougne market", 2662, 3305)});
+        }
         SPOTS.put(Task.FARMER, new Spot[]{sp("the Draynor wheat field", 3118, 3273), sp("the Lumbridge farm", 3162, 3295)}); // audit 10-21 B4: no farmer at the market // batch 26 fix 4: were 3124,3276 (inside the field, through its gate) and 3156,3300 (the old walker pressed into the farm's west fence, ~160 rescues/24 h); TestB26 SPOTS: 3118,3273 is 4 tiles from the field's farmer with no door, 3162,3295 is the farm's open south side (0 doors)
         // Men and Al Kharid warriors, so a skint bot has an honest way to its first coins (pickpocketing pays on the spot).
         if (SPOTS.get(Task.MAN) == null) SPOTS.put(Task.MAN, new Spot[]{sp("the Lumbridge men", 3222, 3218), sp("the Varrock square folk", 3212, 3428), sp("the Draynor villagers", 3093, 3247)});
@@ -286,6 +339,8 @@ public final class AfkTasks implements StartupListener {
         SPOTS.put(Task.ONION, new Spot[]{ONION_F});
         SPOTS.put(Task.WOOL, new Spot[]{SHEEP_F});
         SPOTS.put(Task.EGGS, new Spot[]{EGG_F});
+        for (Task t : new Task[]{Task.ST_BAKER, Task.ST_SILK, Task.ST_FUR, Task.ST_SILVER, Task.ST_GEM}) SPOTS.put(t, new Spot[]{sp("the Ardougne market", 2662, 3305)}); // P61
+        SPOTS.put(Task.ST_SEED, new Spot[]{DRAY_MARKET}); // P61
     }
 
     static final Map<Integer, Spot[]> ORE_SPOTS = new HashMap<>();
@@ -366,8 +421,12 @@ public final class AfkTasks implements StartupListener {
             case "list": list(player, args.length > 2 ? args[2].toLowerCase(Locale.ROOT) : null); return;
             case "help": case "?": help(player); return;
             case "gold": {
+                // P56 A2: task words first. "::afk gold bank" (the window's Gold (40) mining), "gold ore", "gold bars", "gold x50" are
+                // jobs; only "::afk gold" alone or "::afk gold att|str|def|shared|keep" (nothing after the style) is the money plan.
+                if (args.length > 3 || args.length > 2 && styleWord(args[2]) == null) { startWords(player, args); return; }
                 String st = args.length > 2 ? styleWord(args[2]) : "keep";
                 if (st == null) { player.sendMessage("<col=ff0000>AFK: style is att, str, def or shared."); return; }
+                if (!player.isArtificial() && (st.equals("ranged") || st.equals("magic"))) { player.sendMessage("<col=ff0000>AFK: the gold plan fights with melee only; use att, str, def or shared (or ::afk <monster> " + (st.equals("magic") ? "mage" : "ranged") + " for a ranged/magic fight)."); return; } // P70 flaw 2: startGold has no gear check and no ranged/mage flags
                 startGold(player, st);
                 return;
             }
@@ -417,6 +476,10 @@ public final class AfkTasks implements StartupListener {
             player.sendMessage("<col=ff0000>AFK: you need " + toolName(task) + " for that." + shopHint(player, task.tools)); // batch 23 T5: the shop's name, message only
             return;
         }
+        if (task == Task.RUNITE && !player.isArtificial() && at == null && !runiteNear(player.getLocation())) { // P61: cache check (RenderWorldMap features.json) found runite only at 2375,3850 (Neitiznot, quest) and 3060,3885 (Wilderness); the Heroes' Guild ones need the quest
+            player.sendMessage("<col=ff0000>AFK: no runite rock can be reached without the Wilderness or a quest (Heroes' Guild, Neitiznot), so ::afk has no runite spot. Stand next to a runite rock and start it there, or mine adamantite.");
+            return;
+        }
         if (task == Task.ESSENCE && !hasAny(player, PICKAXES)) { player.sendMessage("<col=ff0000>AFK: you need a pickaxe for that." + shopHint(player, PICKAXES)); return; } // redesign: it had no tool check
         if (task.kind == Kind.FISH && task == Task.BAIT && player.getInventory().getAmount(313) == 0) {
             player.sendMessage("<col=ff0000>AFK: you need fishing bait for that." + shopHint(player, ids(313)));
@@ -425,6 +488,10 @@ public final class AfkTasks implements StartupListener {
         if (task.kind == Kind.FISH && task == Task.LURE && player.getInventory().getAmount(FEATHER) == 0) {
             player.sendMessage("<col=ff0000>AFK: you need feathers for fly fishing." + shopHint(player, ids(FEATHER)));
             return;
+        }
+        if (!player.isArtificial() && task.kind == Kind.FIGHT && (style.equals("ranged") || style.equals("magic"))) { // P61: check the gear before starting
+            String why = styleGearProblem(player, style);
+            if (why != null) { player.sendMessage("<col=ff0000>AFK: " + why); return; }
         }
         stop(player, null);
         if (task.kind == Kind.FIGHT && !style.equals("keep")) setStyle(player, style);
@@ -438,7 +505,8 @@ public final class AfkTasks implements StartupListener {
         r.cookHaul = cookHaul && task.kind == Kind.FISH;
         if (checked && pr != Process.NONE || task.kind == Kind.BANK) r.chain(pr, want); // batch 23 T4: sets smeltHaul / cookHaul too
         r.stopLevel = Math.min(99, stopLevel);
-        r.styleSkill = style.equals("strength") ? Skills.STRENGTH : style.equals("defence") ? Skills.DEFENCE : Skills.ATTACK;
+        r.styleSkill = styleSkillOf(style);
+        if (!player.isArtificial() && task.kind == Kind.FIGHT) { r.rangedRun = style.equals("ranged"); r.mageRun = style.equals("magic"); Item wpn = player.getEquipment().get(3); r.thrownId = r.rangedRun && wpn != null && thrown(wpn) ? wpn.getId() : -1; } // P61
         if (at != null) { r.spot = at.at; if (!r.goTo(State.TO_SPOT, at.at)) return; } // audit 10-23 A-11: goTo ended it (finish() said why)
         RUNNING.put(key(player), r);
         GameWorld.getPulser().submit(r);
@@ -455,16 +523,18 @@ public final class AfkTasks implements StartupListener {
     static final Map<Task, String> FIRST_WORD = new HashMap<>(); // the word the list shows
     static void w(Task t, String... ws) { FIRST_WORD.putIfAbsent(t, ws[0]); for (String x : ws) WORDS.put(x, t); }
     static {
-        for (Task t : Task.values()) WORDS.put(t.key, t);
+        for (Task t : Task.values()) if (!W7cSkills.ardyKey(t.key)) WORDS.put(t.key, t); // W7c: the two bots-only pickpocket jobs are not ::afk words
         w(Task.BEST_TREE, "logs", "wood", "woodcutting", "chop"); w(Task.TREE, "tree", "normal tree", "normal logs"); w(Task.OAK, "oak", "oak logs"); w(Task.WILLOW, "willow", "willow logs");
         w(Task.MAPLE, "maple", "maple tree", "maple logs"); w(Task.YEW, "yew", "yew logs"); w(Task.MAGIC, "magic", "magic tree", "magic logs");
         w(Task.BEST_ROCK, "ore", "mine", "mining", "rocks"); w(Task.COPPER, "copper", "copper ore"); w(Task.TIN, "tin", "tin ore"); w(Task.CLAY, "clay"); w(Task.IRON, "iron", "iron ore");
         w(Task.SILVER, "silver", "silver ore"); w(Task.COAL, "coal"); w(Task.GOLD, "gold", "gold ore"); w(Task.MITHRIL, "mithril", "mithril ore"); w(Task.ADAMANT, "adamant", "adamantite", "adamantite ore", "addy");
         w(Task.RUNITE, "runite", "runite ore"); w(Task.ESSENCE, "essence", "ess", "rune essence", "pure essence");
         w(Task.NET, "fish", "fishing", "shrimp", "shrimps", "anchovies", "anchovy", "small net"); w(Task.BAIT, "sardine", "herring", "pike", "bait fishing"); w(Task.LURE, "trout", "salmon", "fly fishing");
-        w(Task.CAGE, "lobster", "lobsters"); w(Task.HARPOON, "tuna", "swordfish", "shark", "harpoon fishing");
+        w(Task.BIG_NET, "big net", "bignet", "big net fishing", "mackerel", "cod", "bass"); w(Task.CAGE, "lobster", "lobsters"); w(Task.HARPOON, "tuna", "swordfish", "shark", "harpoon fishing");
         w(Task.MAN, "pickpocket men", "pickpocket", "pickpocket man", "pickpocket women", "thieving"); w(Task.FARMER, "pickpocket farmers", "pickpocket farmer"); w(Task.WARRIOR, "pickpocket warriors", "pickpocket warrior");
         w(Task.GUARD, "pickpocket guards", "pickpocket guard");
+        w(Task.ST_BAKER, "stalls", "baker stall", "bakers stall", "cake stall", "steal cakes", "cakes"); w(Task.ST_SILK, "silk stall", "silk", "steal silk"); w(Task.ST_FUR, "fur stall", "fur", "steal fur"); // P61
+        w(Task.ST_SILVER, "silver stall", "steal silver"); w(Task.ST_GEM, "gem stall", "gems", "steal gems"); w(Task.ST_SEED, "seed stall", "seeds", "steal seeds"); // P61
         w(Task.AUTO, "fight", "combat", "best target", "anything"); w(Task.CHICKEN, "chicken", "chickens"); w(Task.COW, "cow", "cows"); w(Task.GOBLIN, "goblin", "goblins"); w(Task.RAT, "rat", "rats", "giant rats", "giant rat");
         w(Task.F_MAN, "men", "man", "women", "woman"); w(Task.AL_KHARID, "warriors", "al kharid warriors", "al-kharid warriors"); w(Task.F_GUARD, "guards"); w(Task.BARBARIAN, "barbarian", "barbarians");
         w(Task.ROCK_CRAB, "crabs", "rock crabs", "rock crab"); w(Task.HILL_GIANT, "hill giants", "hill giant", "giants"); w(Task.MOSS_GIANT, "moss giants", "moss giant");
@@ -477,10 +547,12 @@ public final class AfkTasks implements StartupListener {
         w(Task.SMELT_STEEL, "steel", "steel bars", "steel bar"); w(Task.SMELT_GOLD, "gold bars", "gold bar"); w(Task.SMELT_MITHRIL, "mithril bars", "mithril bar"); w(Task.SMELT_ADAMANT, "adamant bars", "adamant bar", "adamantite bars");
         Object[][] needs = {{Task.OAK, Skills.WOODCUTTING, 15}, {Task.WILLOW, Skills.WOODCUTTING, 30}, {Task.MAPLE, Skills.WOODCUTTING, 45}, {Task.YEW, Skills.WOODCUTTING, 60}, {Task.MAGIC, Skills.WOODCUTTING, 75},
                 {Task.IRON, Skills.MINING, 15}, {Task.SILVER, Skills.MINING, 20}, {Task.COAL, Skills.MINING, 30}, {Task.GOLD, Skills.MINING, 40}, {Task.MITHRIL, Skills.MINING, 55}, {Task.ADAMANT, Skills.MINING, 70}, {Task.RUNITE, Skills.MINING, 85},
-                {Task.BAIT, Skills.FISHING, 5}, {Task.LURE, Skills.FISHING, 20}, {Task.HARPOON, Skills.FISHING, 35}, {Task.CAGE, Skills.FISHING, 40},
+                {Task.BIG_NET, Skills.FISHING, 16}, {Task.BAIT, Skills.FISHING, 5}, {Task.LURE, Skills.FISHING, 20}, {Task.HARPOON, Skills.FISHING, 35}, {Task.CAGE, Skills.FISHING, 40},
                 {Task.SMELT_IRON, Skills.SMITHING, 15}, {Task.SMELT_SILVER, Skills.SMITHING, 20}, {Task.SMELT_STEEL, Skills.SMITHING, 30}, {Task.SMELT_GOLD, Skills.SMITHING, 40}, {Task.SMELT_MITHRIL, Skills.SMITHING, 50}, {Task.SMELT_ADAMANT, Skills.SMITHING, 70},
-                {Task.FARMER, Skills.THIEVING, 10}, {Task.WARRIOR, Skills.THIEVING, 25}, {Task.GUARD, Skills.THIEVING, 40}};
+                {Task.FARMER, Skills.THIEVING, 10}, {Task.WARRIOR, Skills.THIEVING, 25}, {Task.GUARD, Skills.THIEVING, 40},
+                {Task.ST_BAKER, Skills.THIEVING, 5}, {Task.ST_SILK, Skills.THIEVING, 20}, {Task.ST_SEED, Skills.THIEVING, 27}, {Task.ST_FUR, Skills.THIEVING, 35}, {Task.ST_SILVER, Skills.THIEVING, 50}, {Task.ST_GEM, Skills.THIEVING, 75}}; // P61 stalls (Stall enum levels)
         for (Object[] m : needs) NEEDS.put((Task) m[0], new int[]{(Integer) m[1], (Integer) m[2]});
+        if (W7cSkills.THIEVE_ARDY) { NEEDS.put(Task.MASTER_FARMER, new int[]{Skills.THIEVING, W7cSkills.MASTER_LEVEL}); NEEDS.put(Task.KNIGHT, new int[]{Skills.THIEVING, W7cSkills.KNIGHT_LEVEL}); } // W7c (-Dbots.thieve.ardy)
     }
 
     static String styleWord(String s) {
@@ -489,6 +561,8 @@ public final class AfkTasks implements StartupListener {
             case "str": case "strength": case "aggressive": return "strength";
             case "def": case "defence": case "defense": case "defensive": return "defence";
             case "shared": case "controlled": return "shared";
+            case "ranged": case "range": case "rapid": case "longrange": return "ranged"; // P61 (players): the worn bow/thrown weapon, ammo from the pack
+            case "mage": case "autocast": return "magic"; // P61 (players): the autocast spell; not "magic" (that word is magic trees)
             case "keep": return "keep";
             default: return null;
         }
@@ -568,6 +642,7 @@ public final class AfkTasks implements StartupListener {
         boolean cook = chainPr == Process.COOK, smelt = chainPr == Process.SMELT || chainPr == Process.SMITH;
         if (!style.equals("keep") && task.kind != Kind.FIGHT) { p.sendMessage("<col=ff0000>AFK: a combat style only matters when fighting."); return; }
         if (bury && task.kind != Kind.FIGHT) { p.sendMessage("<col=ff0000>AFK: 'bury' is for fights that drop bones."); return; }
+        if (bury && (task == Task.ROCK_CRAB || task == Task.IMP_BEADS)) { p.sendMessage("<col=ff0000>AFK: " + (task == Task.ROCK_CRAB ? "rock crabs" : "imps") + " drop no bones, so there is nothing to bury."); return; } // P56 A4
         if (level > 99) { p.sendMessage("<col=ff0000>AFK: levels go up to 99."); return; }
         if (!magicWords.isEmpty() && !chainPr.magic()) { p.sendMessage("<col=ff0000>AFK: '" + magicWords.get(0) + "' is for Magic jobs (::afk alch <item> [low] [force] [auto])."); return; } // batch 25
         if (chainPr.magic()) { // batch 25 (AfkMagic): the guards and the fallback ladder; the resolved job rides to Runner.chain in PENDING
@@ -593,8 +668,11 @@ public final class AfkTasks implements StartupListener {
         begin(p, task, bank, sell, smelt, cook, false, count, style, bury, loot, level, at, chainPr, want, true);
     }
 
+    /** t62 fix 1: SPOTS as a player sees it: with -Dartisans.herbSupply the bots' limpwurt spot is hidden from players. */
+    static Spot[] spotsFor(Task t, boolean bot) { return W6Herbs.botOnlySpot(W6Herbs.SUPPLY, t == Task.LIMPWURT, bot) ? null : SPOTS.get(t); }
+
     static Spot spotNamed(Task t, String place) {
-        Spot[] spots = SPOTS.get(t);
+        Spot[] spots = spotsFor(t, false);
         if (spots == null || place.isEmpty()) return null;
         for (Spot s : spots) {
             String n = s.name.toLowerCase(Locale.ROOT).replace("'", "");
@@ -606,7 +684,7 @@ public final class AfkTasks implements StartupListener {
     }
 
     static String places(Task t) {
-        Spot[] spots = SPOTS.get(t);
+        Spot[] spots = spotsFor(t, false);
         if (spots == null) return "none known: stand where you want to work and leave out 'at'";
         StringBuilder sb = new StringBuilder();
         for (Spot s : spots) sb.append(sb.length() > 0 ? ", " : "").append(s.name.replaceFirst("^the ", ""));
@@ -632,15 +710,15 @@ public final class AfkTasks implements StartupListener {
     }
 
     static boolean named(String name, String place) {
-        String n = name.toLowerCase(Locale.ROOT).replace("'", "");
-        for (String x : place.toLowerCase(Locale.ROOT).replace("'", "").split(" ")) if (!x.isEmpty() && !n.contains(x)) return false;
+        String n = name.toLowerCase(Locale.ROOT).replace("'", "").replace('-', ' '); // P56 A8: "al-kharid" and "Al Kharid" match
+        for (String x : place.toLowerCase(Locale.ROOT).replace("'", "").replace('-', ' ').split(" ")) if (!x.isEmpty() && !n.contains(x)) return false;
         return true;
     }
 
     /** The task's own places, then up to six found ones near the player. */
     static String places(Task t, Player p) {
         StringBuilder sb = new StringBuilder();
-        Spot[] spots = SPOTS.get(t);
+        Spot[] spots = spotsFor(t, false);
         if (spots != null) sb.append(places(t));
         if (p != null) {
             List<Spot> f = foundSpots(t, t.products, p, p.getLocation(), false);
@@ -669,6 +747,7 @@ public final class AfkTasks implements StartupListener {
                     if (c.getValue() < 2) continue;
                     int[] b = RouteMap.BEST.get(c.getKey());
                     Location l = b != null ? Location.create(b[0], b[1], 0) : Location.create(RouteMap.cx(c.getKey()) * RouteMap.CELL + 4, RouteMap.cy(c.getKey()) * RouteMap.CELL + 4, 0);
+                    if (Resources.skipSpot(l)) continue; // P43: -Dresources.skipPockets
                     if (from == null || l.getDistance(from) <= radius) out.add(l);
                 }
             }
@@ -713,7 +792,7 @@ public final class AfkTasks implements StartupListener {
             if (hunts) {
                 if (t.kind != Kind.FIGHT || t.targets == null) return out;
                 for (HuntMap.Hunt h : new ArrayList<>(HuntMap.HUNTS)) {
-                    if (h == null || h.spot == null || h.spot.getDistance(from) > R) continue;
+                    if (h == null || h.spot == null || h.tag != null || h.spot.getDistance(from) > R) continue; // slayer8: extra spots are for task holders (none with the flag off)
                     boolean match = false;
                     for (String tg : t.targets) {
                         if (tg.equalsIgnoreCase(h.name)) match = true;
@@ -815,7 +894,7 @@ public final class AfkTasks implements StartupListener {
         p.sendMessage("<col=0b5e1f>Also: ::afk stop, ::afk finish (bank, then stop), ::afk status, ::afk gold (best money for your levels), ::afk list <skill>.");
     }
 
-    static final String[][] GROUPS = {{"woodcutting", "TREE"}, {"mining", "ROCK"}, {"fishing", "FISH"}, {"smithing", "SMELT"}, {"thieving", "THIEVE"}, {"combat", "FIGHT"}, {"gathering", "PICK", "GROUND"}};
+    static final String[][] GROUPS = {{"woodcutting", "TREE"}, {"mining", "ROCK"}, {"fishing", "FISH"}, {"smithing", "SMELT"}, {"thieving", "THIEVE", "STALL"}, {"combat", "FIGHT"}, {"gathering", "PICK", "GROUND"}};
 
     static boolean inGroup(Task t, String[] g) { for (int k = 1; k < g.length; k++) if (t.kind.name().equals(g[k])) return true; return false; }
 
@@ -824,7 +903,7 @@ public final class AfkTasks implements StartupListener {
     static void list(Player p, String skill) {
         if (skill == null) {
             StringBuilder sb = new StringBuilder();
-            for (String[] g : GROUPS) { int n = 0; for (Task t : Task.values()) if (inGroup(t, g)) n++; sb.append(sb.length() > 0 ? ", " : "").append(g[0]).append(" (").append(n).append(")"); }
+            for (String[] g : GROUPS) { int n = 0; for (Task t : Task.values()) if (inGroup(t, g) && !W7cSkills.ardyKey(t.key)) n++; sb.append(sb.length() > 0 ? ", " : "").append(g[0]).append(" (").append(n).append(")"); }
             p.sendMessage("<col=0b5e1f>AFK: " + sb + ", processing. ::afk list <skill> for the targets.");
             return;
         }
@@ -836,7 +915,7 @@ public final class AfkTasks implements StartupListener {
             if (!g[0].startsWith(skill)) continue;
             StringBuilder sb = new StringBuilder();
             for (Task t : Task.values()) {
-                if (!inGroup(t, g)) continue;
+                if (!inGroup(t, g) || W7cSkills.ardyKey(t.key)) continue; // W7c: the bots-only jobs are not listed
                 int[] need = NEEDS.get(t);
                 sb.append(sb.length() > 0 ? ", " : "").append(wordFor(t)).append(need != null ? " (" + need[1] + ")" : "");
             }
@@ -922,7 +1001,7 @@ public final class AfkTasks implements StartupListener {
         if (g.task.kind == Kind.FIGHT && !style.equals("keep")) setStyle(player, style);
         Runner r = new Runner(player, g.task, true, 0, false, true);
         r.sell = true;
-        r.styleSkill = style.equals("strength") ? Skills.STRENGTH : style.equals("defence") ? Skills.DEFENCE : Skills.ATTACK; // same meaning as ::afk start (it defaulted to Strength here)
+        r.styleSkill = styleSkillOf(style); // same meaning as ::afk start (it defaulted to Strength here)
         r.spot = g.spot;
         if (!r.goTo(State.TO_SPOT, g.spot)) return; // audit 10-23 A-11: goTo ended it (finish() said why)
         RUNNING.put(key(player), r);
@@ -935,6 +1014,7 @@ public final class AfkTasks implements StartupListener {
     static String key(Player p) { return p.getUsername().toLowerCase(Locale.ROOT); }
 
     static void stop(Player player, String msg) {
+        Bob.leave(player, "stop"); // P86 hook 10
         Runner r = RUNNING.remove(key(player));
         if (r != null) r.halt();
         if (msg != null && r != null) { player.sendMessage("<col=0b5e1f>AFK: " + msg); r.summary(); }
@@ -952,6 +1032,7 @@ public final class AfkTasks implements StartupListener {
         if (t == Task.WOOL) return "shears";
         switch (t) {
             case NET: return "a small fishing net";
+            case BIG_NET: return "a big fishing net";
             case BAIT: return "a fishing rod";
             case LURE: return "a fly fishing rod";
             case CAGE: return "a lobster pot";
@@ -963,6 +1044,41 @@ public final class AfkTasks implements StartupListener {
     /** Picks the combat style that trains the chosen skill, if the wielded weapon has it. */
     static boolean hasId(int[] list, int id) { if (list != null) for (int x : list) if (x == id) return true; return false; }
 
+    static int styleSkillOf(String style) {
+        switch (style) {
+            case "strength": return Skills.STRENGTH;
+            case "defence": return Skills.DEFENCE;
+            case "ranged": return Skills.RANGE; // P61
+            case "magic": return Skills.MAGIC; // P61
+            default: return Skills.ATTACK;
+        }
+    }
+
+    /** P61: darts, knives, javelins, throwing axes: the weapon is the ammo. */
+    static boolean thrown(Item w) {
+        String n = w == null || w.getName() == null ? "" : w.getName().toLowerCase(Locale.ROOT);
+        return n.contains("dart") || n.contains("knife") || n.contains("javelin") || n.contains("thrownaxe") || n.contains("throwing axe");
+    }
+    static boolean bowLike(Item w) { String n = w == null || w.getName() == null ? "" : w.getName().toLowerCase(Locale.ROOT); return n.contains("bow"); } // shortbow, longbow, crossbow, comp bow
+    static boolean ammoFor(Item weapon, Item ammo) {
+        if (weapon == null || ammo == null || ammo.getName() == null) return false;
+        int b = SmartAdventurers.bowIndex(weapon.getId());
+        if (b >= 0 && SmartAdventurers.isArrow(ammo.getId())) return SmartAdventurers.bowFires(weapon.getId(), ammo.getId());
+        String wn = weapon.getName().toLowerCase(Locale.ROOT), an = ammo.getName().toLowerCase(Locale.ROOT);
+        return wn.contains("crossbow") ? an.contains("bolts") && !an.contains("(unf)") : an.endsWith("arrow") || an.endsWith("arrows");
+    }
+
+    /** P61 (players): null when the gear fits the style: ranged = a bow with ammo (quiver or pack) or a thrown weapon; magic = an autocast spell set. */
+    static String styleGearProblem(Player p, String style) {
+        Item w = p.getEquipment().get(3);
+        if (style.equals("magic")) return p.getProperties().getAutocastSpell() != null ? null : "for 'mage' set an autocast spell on your staff first; the fight casts it and stops when the runes run out.";
+        if (thrown(w)) return null;
+        if (!bowLike(w)) return "for 'ranged' wield a bow, crossbow or thrown weapon first.";
+        if (p.getEquipment().get(13) != null && ammoFor(w, p.getEquipment().get(13))) return null;
+        for (Item it : p.getInventory().toArray()) if (it != null && ammoFor(w, it)) return null;
+        return "no ammo for your " + w.getName() + " in the quiver or the pack.";
+    }
+
     static void setStyle(Player player, String style) {
         int want;
         switch (style) {
@@ -970,6 +1086,8 @@ public final class AfkTasks implements StartupListener {
             case "strength": want = WeaponInterface.STYLE_AGGRESSIVE; break;
             case "defence": want = WeaponInterface.STYLE_DEFENSIVE; break;
             case "shared": want = WeaponInterface.STYLE_CONTROLLED; break;
+            case "longrange": want = WeaponInterface.STYLE_LONG_RANGE; break; // W5b defShare (bots only; no other caller passes it)
+            case "rangeaccurate": want = WeaponInterface.STYLE_RANGE_ACCURATE; break; // W5b defShare
             default: return;
         }
         WeaponInterface w = player.getExtension(WeaponInterface.class);
@@ -1169,7 +1287,7 @@ public final class AfkTasks implements StartupListener {
             case FURNACE: c.addAll(Arrays.asList(FURNACES)); c.addAll(extraStations(FURNACES, Artisans.Trade.SMELTING.spots, from, "place:furnace")); break; // batch 23 T5: the same union as Runner.nearestFurnace for a player
             case RANGE: c.addAll(Arrays.asList(Runner.RANGES)); c.addAll(extraStations(Runner.RANGES, Artisans.Trade.COOKING.spots, from, "place:range", "place:cooking range")); break;
             case ANVIL: c.addAll(Arrays.asList(Artisans.Trade.SMITHING.spots)); try { Location r = Resources.nearest("place:anvil", from); if (r != null) c.add(r); } catch (Throwable ignored) { } break;
-            case WHEEL: try { Location r = Resources.nearest("place:spinning wheel", from); if (r != null) c.add(r); } catch (Throwable ignored) { } break; // [UNVERIFIED] no ground-floor wheel list: the surveyors' finds only
+            case WHEEL: try { Location r = Resources.nearest("place:spinning wheel", from); if (r != null) c.add(r); } catch (Throwable ignored) { } if (W13aSkills.SPIN) try { c.add(W13aHooks.wheel()); } catch (Throwable t) { } /* W13a (-Dbots.craft.spin): the map's ground-floor wheel */ break; // [UNVERIFIED] no ground-floor wheel list: the surveyors' finds only
             default: return null;
         }
         Location best = null; double d = 220;
@@ -1192,7 +1310,7 @@ public final class AfkTasks implements StartupListener {
         if (!loop) {
             switch (pr) {
                 case SMELT: case SMITH: if (t.kind != Kind.ROCK || t == Task.CLAY || t == Task.ESSENCE) return "'" + pr.word + "' is for mining ore (::afk " + (pr == Process.SMELT ? "bars" : "smith <item>") + " works from your bank)."; break;
-                case COOK: if (t.kind != Kind.FISH) return "'cook' is for fishing (::afk cook works from your bank)."; break;
+                case COOK: if (t.kind != Kind.FISH) return "'cook' is for fishing (::afk cook works from your bank)."; if (!bank && !p.isArtificial()) return "'cook' then 'drop' would throw the food away: choose bank or sell."; break; // P56 A4 (it banked anyway)
                 case FLETCH: case BURN: if (t.kind != Kind.TREE) return "'" + pr.word + "' is for woodcutting (::afk " + pr.word + " works from your bank)."; break;
                 case SPIN: if (t != Task.WOOL && t != Task.FLAX) return "'spin' is for wool or flax (::afk spin works from your bank)."; break;
                 case BURY: return "'bury' is for fights that drop bones, or ::afk bury from your bank.";
@@ -1249,6 +1367,9 @@ public final class AfkTasks implements StartupListener {
         // Dynamic hunts (smart adventurers) override what the task enum says.
         String[] targetsOverride; int[] productsOverride; String labelOverride;
         boolean cookHaul; // bots: cook the catch at a range before selling it
+        int w7Fletch, w7FletchId, w7FletchHad, w7FletchLogs, w7FletchTick; // W7c (-Dbots.fletch.own): 0 unless SmartAdventurers gave this woodcutter a knife (see W7cHooks)
+        int w8Power; // W8 (-Dbots.wc.power / -Dbots.fish.power): KIND_WC / KIND_FISH for a power trip, 0 unless a flag set it
+        int w5SpotRule, w5Burnt; boolean w5Fire, w5Vanish; // W5a: harpoon spot rule (bots.fish.shark), burns this cook stop (bots.cook.burn), cooking on its own fire (bots.cook.fire), power drops vanish (bots.mine.power); 0/false unless a flag set them
         boolean walker;   // bots without the coins for teleports walk everywhere
         Spot[] questSpots; // a quest's own spots (imps round Falador): relocate() cycles these instead of the task's
         boolean questHold; // gathering for a quest (QuestSteps.Collect): leave its dialogues alone, keep the haul in the pack
@@ -1304,10 +1425,18 @@ public final class AfkTasks implements StartupListener {
         ScriptAPI.BottingOverlay overlay;
         State state = State.WORK;
         int collected, lastCount, wait, idleTicks, lootTicks;
+        W6Fight.St w6; boolean w6Only; // W6 wave 3 combat lane (-Dbots.prayer.stat, -Dbots.ranged.kit2): null / false with both flags off
         Location dest;
         Location walkFrom; // batch 18 item2: where the current goTo() walk started (the scenario record)
         Location underDest; // a dungeon spot: walk to the entrance first, climb down, then on to here
+        Location upDest; // P90 fix 2: a surface goal from inside a known dungeon: walk to the entrance's foot, climb up (free), then on to here
         int bankPause;                   // bots: one short pause at the booth before depositing
+        // P92 S4 (Bob.java, -Dbots.summoning.bob): the trip's beast of burden. Never saved: bots' saves are our own profiles.
+        content.global.skill.summoning.familiar.BurdenBeast bob;
+        int bobPouch, bobPass, bobHeld, bobCarried;
+        int famPouch, famUsed; long famNext; // Summoning in combat (Bob.combatPlan / combatSummon, -Dbots.summoning.combat): the trip's combat pouch
+        int famScroll, famSpecials, famSpecFails; long famSpecNext, famSpecAt; // Summoning in combat v2 (-Dbots.summoning.combat2): the trip's scroll and its specials
+        boolean bobTried;
         Location routeLast;              // where it was when it last made progress (route following)
         long shortcutSince;              // pathing review 10-23 R-2: when walk() first saw the route's shortcut in use
         Location lastNodeAt; int lastNodeId; // the rock or tree it was working, to notice when it runs out
@@ -1339,6 +1468,28 @@ public final class AfkTasks implements StartupListener {
          *  on only with -Dafk.bridgeFix=true, and data/afk.bridgefix.off forces it off even then. Read once at class load.
          *  Bots and players share this path, so turning it on changes bot walking too. Off = the old behaviour exactly. */
         static final boolean BRIDGE_FIX = bridgeFixOn();
+        /** P91 (-Dnav.p91Fix=true, default off; off = the old code exactly): core NPC.checkImpact zeroes every hit from a player whose
+         *  Slayer level is below the NPC's task levelReq, while isAttackable still allows the attack (crawling hands 5, cave bugs 7, ...).
+         *  With P91 on, bots and ::afk never pick or keep fighting an NPC they cannot wound. */
+        static final boolean P91 = Boolean.parseBoolean(System.getProperty("nav.p91Fix", "false"));
+        /** P91: the pure level rule (unit-tested): on, and the NPC needs more Slayer than the player has. */
+        static boolean p91Blocks(boolean on, int need, int slayer) { return on && need > 0 && need > slayer; }
+        /** P91: Slayer level this NPC needs before a hit can wound it (0 = none or unknown). */
+        static int slayerNeed(NPC n) {
+            try { content.global.skill.slayer.Tasks t = n == null ? null : n.getTask(); return t == null ? 0 : t.levelReq; } catch (Throwable t) { return 0; }
+        }
+        static int slayerLevel(Player p) { try { return p.getSkills().getLevel(Skills.SLAYER); } catch (Throwable t) { return 99; } }
+        static boolean cannotWound(Player p, NPC n) { return p91Blocks(P91, slayerNeed(n), slayerLevel(p)); }
+        /** P91 counters, printed as one [P91] count line at most every 10 min: hunts refused (SmartAdventurers), targets skipped, fights dropped. */
+        static final java.util.concurrent.atomic.AtomicLong P91_HUNT = new java.util.concurrent.atomic.AtomicLong(), P91_PICK = new java.util.concurrent.atomic.AtomicLong(), P91_FIGHT = new java.util.concurrent.atomic.AtomicLong();
+        static volatile long p91LastLog;
+        static void p91Count(java.util.concurrent.atomic.AtomicLong c) {
+            c.incrementAndGet();
+            long now = System.currentTimeMillis();
+            if (now - p91LastLog < 600_000L) return;
+            p91LastLog = now;
+            System.out.println("[P91] count huntsRefused=" + P91_HUNT.get() + " targetsSkipped=" + P91_PICK.get() + " fightsDropped=" + P91_FIGHT.get());
+        }
         /** P39 reachability: master -Dreach=true (default off); -Dreach.<fix> overrides one fix (defaults to the master). Off = train-4 exactly.
          *  myre (Gates: Mort Myre box), bridge (bridgeVia: the Lumbridge deck), shilo (Gates: Shilo closed to bots), gates (NavGrid: the
          *  built-in multi-tile gate record), sea (SmartAdventurers: a same-side shop before one across the sea; own switch, not the master). Gates and NavGrid read the same properties. */
@@ -1353,7 +1504,7 @@ public final class AfkTasks implements StartupListener {
         /** Walks with the route knowledge (planner, tolls, the pass, detours, gate/island refusals): every bot, and players while player travel mode is on. */
         boolean travels() { return p.isArtificial() || playerNav(); }
         static String navMode() {
-            return playerNav() ? "travel mode (" + (NavWalker.ON ? "route planner on" : "route planner off: learned routes and detours") + ", tolls from your pack, no teleports or boats)" : "plain walk (player travel mode off)";
+            return playerNav() ? "travel mode (" + (NavWalker.ON || PLAYER_PLANNER ? "route planner on" : "route planner off: learned routes and detours") + ", tolls from your pack, no teleports or boats)" : "plain walk (player travel mode off)";
         }
         /** batch 23 T2: the coins a walker has to hand at a gate: a bot its wallet (bank + pack, as before), a player the coins in the pack. */
         static long gateCoins(Player who) {
@@ -1400,10 +1551,12 @@ public final class AfkTasks implements StartupListener {
         boolean keepAll;        // players: ::afk ... keep: nothing sold at the booth
         boolean finishWanted;   // players: ::afk finish: bank first, then stop
         String last = "";
+        String endWhy; // W4 guards: the finish reason of a completed trip (only set with -Dbots.brokeJob.zeroSkip)
         // Danger sense: biggest hit taken, hp last tick, retreats so far, where we were last tick.
         int bigHit, lastHp, retreats, recoverTicks, dangerFlees;
         int lastBite = -10;    // combat review 10-23 #1: world tick of the last bite (a player eats every 3 ticks)
         int emergencies;       // combat review 10-23 #2: emergency teleports this trip
+        int goPaid;            // W1 capFix: paid goTo teleports this trip (Slayer.exemptLeg)
         Location lastLoc;
         String fleeReason, quitWhenSafe;
         int sinceGain;
@@ -1440,6 +1593,24 @@ public final class AfkTasks implements StartupListener {
         int stopLevel, styleSkill = Skills.ATTACK, foodTaken;
         final long startedAt = System.currentTimeMillis();
         final double[] startXp = new double[Skills.SKILL_NAME.length];
+        /** train-5 F5: the [StyleTrip] line's start values (quiver, pack runes mind/chaos/death/air, autocast). */
+        static final int[] STYLE_RUNES = {558, 562, 560, 556};
+        int ammo0Id = -1, ammo0N, cast0 = -1, arrowsBack; final int[] runes0 = new int[4]; String styleTrip;
+        static int castId(Player p) { core.game.node.entity.combat.spell.CombatSpell s = p.getProperties().getAutocastSpell(); return s == null ? -1 : s.getSpellId(); }
+
+        /** F5: one line per ranged or magic fight trip (no flag, ignores data/style5.off). */
+        String styleTripLine(String why) {
+            Item q = p.getEquipment().get(13); int id1 = q == null ? -1 : q.getId(), n1 = q == null ? 0 : q.getAmount();
+            StringBuilder s = new StringBuilder("[StyleTrip] ").append(p.getUsername()).append(" style=").append(SmartAdventurers.styleOf(p) == SmartAdventurers.RANGED ? "ranged" : "magic")
+                    .append(" job=").append(label()).append(" min=").append((System.currentTimeMillis() - startedAt) / 60_000)
+                    .append(" ammo=").append(ammo0Id).append(':').append(ammo0N).append("->").append(id1 == ammo0Id ? "" : id1 + ":").append(n1).append(" runes=");
+            String[] tag = {"m", "c", "d", "a"};
+            for (int i = 0; i < STYLE_RUNES.length; i++) s.append(i == 0 ? "" : " ").append(tag[i]).append(runes0[i]).append('/').append(p.getInventory().getAmount(STYLE_RUNES[i]));
+            s.append(" autocast=").append(cast0).append("->").append(castId(p)).append(" attacks=").append(kills).append(" loot=").append(collected).append(" back=").append(arrowsBack).append(" xp");
+            int[] sk = {Skills.RANGE, Skills.MAGIC, Skills.ATTACK, Skills.STRENGTH, Skills.DEFENCE}; String[] nm = {"rng", "mag", "att", "str", "def"};
+            for (int i = 0; i < sk.length; i++) s.append(' ').append(nm[i]).append('=').append((int) (p.getSkills().getExperience(sk[i]) - startXp[sk[i]]));
+            return s.append(" fallback=").append(SmartAdventurers.meleeFallback(p) ? "melee" : "none").append(" why=").append(why).toString();
+        }
         // What was already in the bag when the task started; never banked, sold or dropped.
         final Map<Integer, Integer> baseline = new HashMap<>();
         final Map<GroundItem, Integer> tries = new HashMap<>();
@@ -1449,11 +1620,13 @@ public final class AfkTasks implements StartupListener {
             if (!p.isArtificial()) SPENT.remove(key(p)); // batch 23 pre-review 2.1: a new run starts at 0 gp spent
             this.p = p; this.task = task; this.bank = bank; this.stopAfter = stopAfter;
             this.bury = bury; this.loot = loot || task.key.startsWith("c_");
+            if (!p.isArtificial()) productsOverride = playerProducts(task); // P61: players only (rock crab loot, stall loot); bots keep task.products
             this.api = new ScriptAPI(p);
             this.spot = p.getLocation().transform(0, 0, 0);
             this.lastCount = countProducts();
             this.lastHp = p.getSkills().getLifepoints();
             for (int i = 0; i < startXp.length; i++) startXp[i] = p.getSkills().getExperience(i);
+            try { Item q = p.getEquipment().get(13); ammo0Id = q == null ? -1 : q.getId(); ammo0N = q == null ? 0 : q.getAmount(); for (int i = 0; i < STYLE_RUNES.length; i++) runes0[i] = p.getInventory().getAmount(STYLE_RUNES[i]); cast0 = castId(p); } catch (Throwable ignored) { } // train-5 F5
             for (Item it : p.getInventory().toArray()) if (it != null) baseline.merge(it.getId(), it.getAmount(), Integer::sum);
             for (Item it : p.getInventory().toArray()) { if (it == null) continue; int f = potFamily(it.getId()); if (f < 0) continue; potsTaken[f] += it.getAmount(); dosesAtStart[f] += potDoses(it.getId()) * it.getAmount(); if (f >= P_ATT) boostPots = true; } // batch 15 item2/4
             this.lastLoc = this.spot;
@@ -1473,6 +1646,22 @@ public final class AfkTasks implements StartupListener {
                 st = state == State.SMELTING ? pr.ing : "to the " + pr.station.label;
             }
             return label() + (countFinal ? (task.kind == Kind.BANK ? "" : " then " + process.ing) + ", " + made + " made" : ", " + collected + " collected") + (stopAfter > 0 ? " of " + stopAfter : "") + ", " + st + (DEBUG ? " [" + last + "]" : "");
+        }
+
+        /** P40 B4 (-Dbots.brokeJob): a bot under the broke line sells its haul to a shop for coins now (BROKE_SHOP_PCT of the
+         *  guide price; the goods leave the world, as at a real shop), not to the Exchange queue that pays only when a buyer comes.
+         *  A broke bot behind a long queue of yew logs never saw a coin (Hittrees677, p39s4: 80 gp for 4 h). Returns the coins paid. */
+        static long brokeShopSale(Player p, Map<Integer, Integer> haul, Map<Integer, Integer> prices) {
+            long got = 0; int items = 0;
+            for (Map.Entry<Integer, Integer> e : haul.entrySet()) {
+                Integer pr = prices == null ? null : prices.get(e.getKey());
+                int price = pr != null ? pr : guidePrice(e.getKey());
+                if (price <= 0 || e.getValue() <= 0) continue;
+                got += (long) price * e.getValue() * SmartAdventurers.Brain.BROKE_SHOP_PCT / 100; items += e.getValue();
+            }
+            if (got <= 0 || !Ledger.Wallet.give(p, got)) return 0;
+            System.out.println("[Broke] " + p.getUsername() + " sold " + items + " items to the shop for " + got + " gp (now " + Ledger.Wallet.coins(p) + " gp)");
+            return got;
         }
 
         /** Bots: whatever this trip gathered goes straight to bot stock, even if the bank trip failed. */
@@ -1562,6 +1751,7 @@ public final class AfkTasks implements StartupListener {
             RUNNING.remove(key(p), this); // audit 10-23 A-11: a halted runner never stays in RUNNING (only its own entry)
             restoreRetaliate();
             if (usePrayer) { try { p.getPrayer().reset(); } catch (Throwable ignored) { } }
+            if (w6 != null) W6Fight.tripEnd(this); // W6: stat prayers off, one [W6c] prayer line (w6 is null with the flags off)
             if (p.isArtificial()) { try { logPotions(); } catch (Throwable ignored) { } } // batch 15 item2: replaces the prayer-only line
             try {
                 p.getPulseManager().clear();
@@ -1579,27 +1769,68 @@ public final class AfkTasks implements StartupListener {
          * leaving the pulse manager, the walk and RUNNING to the newer runner.
          */
         void superseded() {
+            Bob.leave(p, "stop"); // P86 hook 9
             halted = true;
             restoreRetaliate();
             if (usePrayer) { try { p.getPrayer().reset(); } catch (Throwable ignored) { } }
+            if (w6 != null) W6Fight.tripEnd(this); // W6: stat prayers off, one [W6c] prayer line (w6 is null with the flags off)
             System.out.println("[AfkTasks] " + p.getUsername() + " " + label() + " runner (" + state.name().toLowerCase(Locale.ROOT) + ") stops: a newer runner took over");
             stop();
         }
 
+        /** W1 lane M: real kills. NPC.finalizeDeath sends NPCKillEvent to the killer ImpactHandler.getMostDamageEntity picks: the bot when it struck the last
+         *  blow or did the most player damage, but the FAMILIAR NPC itself when only the familiar damaged the target. So the hook sits on both; a kill that
+         *  arrives at the familiar goes to its owner's running fight trip and is also counted in famKills. Counting only. */
+        static final core.game.event.EventHook<core.game.event.NPCKillEvent> KR_KILL = new core.game.event.EventHook<core.game.event.NPCKillEvent>() {
+            @Override public void process(core.game.node.entity.Entity e, core.game.event.NPCKillEvent ev) {
+                try {
+                    Player o = e instanceof Player ? (Player) e : e instanceof content.global.skill.summoning.familiar.Familiar ? ((content.global.skill.summoning.familiar.Familiar) e).getOwner() : null;
+                    if (o == null || !o.isArtificial()) return;
+                    Runner r = RUNNING.get(key(o));
+                    if (r == null || r.task.kind != Kind.FIGHT) return;
+                    r.npcKills++; if (!(e instanceof Player)) r.famKills++;
+                } catch (Throwable ignored) { }
+            }
+        };
+
+        /** W1 lane M: one line per finished bot fight trip, printed whether or not combat familiars are on, so an ON/OFF pair can compare. "attacks" is the
+         *  runner's attack orders (one per target taken, the same number the "[Summon] trip with" line calls kills); fightMin is time in fight() only. Logging only. */
+        /** W1 lane M: hooks the bot (once per runner) and whichever familiar it has out for the engine's NPCKillEvent. Entity.hook ignores a hook that is already there. */
+        void krHook() {
+            try {
+                if (!krHooked) { krHooked = true; p.hook(core.game.event.NPCKillEvent.class, KR_KILL); }
+                Object f = p.getFamiliarManager().getFamiliar();
+                if (f != null && f != krFam) { krFam = f; ((core.game.node.entity.Entity) f).hook(core.game.event.NPCKillEvent.class, KR_KILL); }
+            } catch (Throwable ignored) { }
+        }
+
+        String killRateLine(String why) {
+            double min = fightMs / 60000.0;
+            return "[KillRate] " + p.getUsername() + " task=" + task.name() + " fam=" + (Bob.COMBAT ? "on" : "off") + " pouches=" + famUsed + " attacks=" + kills + " kills=" + npcKills + " famKills=" + famKills + " fightMin=" + String.format(Locale.ROOT, "%.1f", min)
+                    + " perMin=" + String.format(Locale.ROOT, "%.2f", min <= 0 ? 0.0 : kills / min) + " killsPerMin=" + String.format(Locale.ROOT, "%.2f", min <= 0 ? 0.0 : npcKills / min) + " loot=" + collected + " combat=" + p.getProperties().getCurrentCombatLevel() + " why=" + why;
+        }
+
         void finish(String why) {
+            upDest = null; // P90
+            if (bob == null) Bob.leave(p, "finish"); // P86 hook 8 (S5 familiars carry nothing: always); P92 S4: a loaded beast walks to the bank first (below)
             Watchdog.flog(p, "finish: " + why); // batch 19a design 3.2 (bots only, inside)
             if (crossOnly) { System.out.println("[AfkTasks] " + p.getUsername() + " sea crossing ends: " + why); last = why; halted = true; crossing = false; return; } // batch 17 item3: not a trip: nothing to bank, sell or summarise
             // A bot with goods walks them to a bank first, like a player would, instead of them vanishing into stock from a field.
-            if ((p.isArtificial() || finishWanted) && !questHold && !bankingOut && !halted && countProducts() > 0 && state != State.BANKING && nearestBank() != null && nearestBank().getDistance(p.getLocation()) < 220) {
+            if ((p.isArtificial() || finishWanted) && !questHold && !bankingOut && !halted && (countProducts() > 0 || bobHeld > 0) && state != State.BANKING && nearestBank() != null && nearestBank().getDistance(p.getLocation()) < 220) {
                 bankingOut = true; finishing = true; goalMsg = why;
                 goTo(State.TO_BANK, nearestBank());
                 return;
             }
+            Bob.leave(p, "finish"); // P92 S4 hook 8: no bank walk (or it is done): the beast goes now (leave empties it first)
             RUNNING.remove(key(p), this); // audit B-16: only its own entry (a newer runner for the same bot may already be in)
             try { NavWalker.forget(p); } catch (Throwable ignored) { } // audit B-19: the trip is over; the next one to the same spot plans afresh from wherever the bot is
             try { RouteMap.PLANS.remove(key(p)); RouteMap.USING.remove(key(p)); } catch (Throwable ignored) { } // pathing review 10-23 A-8: the learned-route plan too (a stale plan made the next walk count as "on route")
             if (p.isArtificial() && !questHold) sellLeftovers(); // a bot never carries a failed haul around for ever (a quest haul stays: the quest needs it)
+            if (BrokeSkip.ON) endWhy = why; // W4 guards
             System.out.println("[AfkTasks] " + p.getUsername() + " finished: " + why + " (" + collected + " collected, " + barsMade + " bars)");
+            Seed.trip(p, kills, startedAt, label()); Scen.finish(p, why); // W0 A0: scenario kill line; W8: scenario stall/pocket count (seed flags on only)
+            if (p.isArtificial() && task.kind == Kind.FIGHT && SmartAdventurers.styleOf(p) != SmartAdventurers.MELEE) try { styleTrip = styleTripLine(why); System.out.println(styleTrip); } catch (Throwable ignored) { } // train-5 F5
+            if (p.isArtificial() && task.kind == Kind.FIGHT) try { System.out.println(killRateLine(why)); if (FightRules.LOOT_AFTER && loot) System.out.println("[LootAfter] " + p.getUsername() + " task=" + task.name() + " attacks=" + kills + " kills=" + npcKills + " loot=" + collected + " heldSteps=" + lootHeld + " heldBeforeFirstAttack=" + lootHeldFirst + " pouches=" + famUsed); } catch (Throwable ignored) { } // W1 lane M: same line with combat familiars on or off; W2 lane M: the loot-after line (flag on only)
             if (magic != null) try { AfkMagic.end(this, why); } catch (Throwable ignored) { } // batch 25: the run's ECON line
             if (Watchdog.FAIL_ON && Watchdog.traced(p)) try { Failures.jobEnd(p, this, why); } catch (Throwable ignored) { } // batch 19c B2 (design 7): A's finish-reason table
             p.sendMessage("<col=0b5e1f>AFK: " + why);
@@ -1609,6 +1840,7 @@ public final class AfkTasks implements StartupListener {
 
         @Override
         public void stop() {
+            Bob.leave(p, "stop"); // P86 hook 9
             super.stop();
             restoreRetaliate(); // audit 10-23 A-13: also when the engine stops the pulse (player gone)
             Runner cur = RUNNING.get(key(p));
@@ -1629,9 +1861,13 @@ public final class AfkTasks implements StartupListener {
                 Watchdog.fexc("AfkTasks.Runner.tickOnce", p, t); // batch 19a B3 (a real player's runner: no bot passed)
                 finish("Stopped after an error.");
             }
-            Watchdog.fpulse("AfkTasks.Runner", p, System.nanoTime() - t0); // batch 19c B3
+            long dt = System.nanoTime() - t0;
+            Watchdog.fpulse("AfkTasks.Runner", p, dt); // batch 19c B3
+            COST_NS += dt; COST_N++; // P56: per-tick cost for the smelt test (game thread only)
             return halted;
         }
+
+        static long COST_NS, COST_N; // P56: summed Runner pulse cost (read by TestAfkSmelt)
 
         void tickOnce() {
             // Level-up and other chat pop-ups pause actions, so clear them like the bot engine does.
@@ -1641,7 +1877,7 @@ public final class AfkTasks implements StartupListener {
                 p.getInterfaceManager().close();
             }
             int now = countProducts();
-            if (now > lastCount) { collected += now - lastCount; sinceGain = 0; triedSpots.clear(); if (overlay != null) overlay.setAmount(collected); workNoGain = 0; unstucks = 0; notBusySeen = false; } // batch 19c B2: a gain resets the no-gain window
+            if (now > lastCount) { collected += now - lastCount; sinceGain = 0; respawnWaitSince = -1; /* P56 A3 */ triedSpots.clear(); if (overlay != null) overlay.setAmount(collected); workNoGain = 0; unstucks = 0; notBusySeen = false; } // batch 19c B2: a gain resets the no-gain window
             else if (state == State.WORK && task.kind != Kind.FIGHT && task.kind != Kind.SMELT && task.kind != Kind.BANK && mineBar == null) sinceGain++;
             // Nothing gained for a long while (spot moved, stuck interaction): drop the action and pick a new target.
             if (sinceGain > 150) { sinceGain = 0; p.getPulseManager().clear(); p.scripts.reset(); last = "unstuck"; unstucks++; } // batch 19c B2: counted
@@ -1650,6 +1886,8 @@ public final class AfkTasks implements StartupListener {
             if (Watchdog.FAIL_ON && !noGainNoted && p.isArtificial()) try { noGainTick(); } catch (Throwable ignored) { } // batch 19c B2 (design 7): logging only
 
             if (p.getAttribute("state:death", false)) return; // combat review 10-23 #12: dying (the death animation): no eating, fleeing or teleporting out of it
+            if (bob != null) Bob.guard(this); // P92 S4: gone / timer / danger (a dying bot: SA hook 7 banks the load)
+            if (Bob.COMBAT && famPouch != 0) Bob.combatGuard(this); // Summoning in combat: counts the fights the familiar joins (read only)
             if (sense()) return;
             if (eatIfNeeded()) return; // combat review 10-23 #1: eating and the flee checks come before the action wait (they were blind 6-9 ticks after every attack or bite)
             transitGuard(); // batch 20 B1
@@ -1663,6 +1901,10 @@ public final class AfkTasks implements StartupListener {
             }
             if (!finishing && stopAfter > 0 && !countFinal && collected >= stopAfter) {
                 finishing = true;
+                if (W34Skills.SMELT_FIX2 && p.isArtificial() && smeltHaul && task.kind == Kind.ROCK && bank && state == State.WORK && bestBar(false) != null) { // W34 (-Dbots.chains.smeltFix2): the trip target (14) is under the bag plan (15 ore), so the ore went to the bank unsmelted; the furnace first, smelt() then banks and the trip ends as before
+                    Location f34 = nearestFurnace();
+                    if (f34 != null) { W34Skills.smeltFirst(p.getUsername(), collected, stopAfter); mineBar = null; mineOre = -1; goTo(State.TO_FURNACE, f34); return; }
+                }
                 if (bank && state == State.WORK && nearestBank() != null) { goTo(State.TO_BANK, nearestBank()); return; }
                 if (!bank || nearestBank() == null) { finish("Target reached."); return; }
             }
@@ -1675,9 +1917,11 @@ public final class AfkTasks implements StartupListener {
                 return;
             }
 
+            if (furnaceStalled()) return; // P56 A1
+            if (w6 != null && w6.on && state != State.WORK) W6Fight.off(this); // W6 (-Dbots.prayer.stat): no stat prayer draining on a walk
             switch (state) {
                 case WORK: work(); break;
-                case TO_BANK: walk(State.BANKING); break;
+                case TO_BANK: if (W6Combat.PRAYER_STAT && W6Fight.altarTick(this)) break; walk(State.BANKING); break; // W6 (-Dbots.prayer.stat): the altar on the way back
                 case BANKING: deposit(); break;
                 case TO_SPOT: walk(State.WORK); break;
                 case RETREAT:
@@ -1736,6 +1980,7 @@ public final class AfkTasks implements StartupListener {
                 case THIEVE: return task == Task.WOOL ? -1 : Skills.THIEVING;
                 case FIGHT: return styleSkill;
                 case SMELT: return Skills.SMITHING;
+                case STALL: return Skills.THIEVING; // P61
                 default: return -1;
             }
         }
@@ -1762,15 +2007,19 @@ public final class AfkTasks implements StartupListener {
                 else { if (!busy()) mineForBars(); return; }
             }
             if (p.getInventory().isFull()) {
+                if (W6Combat.KIT2 && W6Fight.arrowSweep(this)) return; // W6 (-Dbots.ranged.kit2): the quiver's arrows off the ground before the bank walk
                 if (cookHaul && rawFishCount() > 0) {
                     Location r = nearestRange();
+                    if (W5aSkills.COOK_FIRE && p.isArtificial() && fireCook(r)) return; // W5a (-Dbots.cook.fire)
                     if (r != null) { processing = "cook"; goTo(State.TO_FURNACE, r); return; }
                 }
                 if (smeltHaul && bestBar(false) != null) {
                     Location f = nearestFurnace();
                     if (f != null) { goTo(State.TO_FURNACE, f); return; }
                 }
+                if (W7cSkills.FLETCH_OWN && w7Fletch != 0 && W7cHooks.fletch(this)) return; // W7c (-Dbots.fletch.own): a third of the logs through the knife (engine script) before the bank
                 if (!smeltHaul && !cookHaul && process != Process.NONE && startProcess()) return; // batch 23 T4: fletch, burn (on the spot) or spin (at the wheel) before delivering
+                if (w8Power != 0) { /* W8 (-Dbots.wc.power / -Dbots.fish.power): a power trip's drops never go in the beast (t61 audit) */ } else if (Bob.ON && bob != null && bob.getTicks() > 400 && !(W5aSkills.MINE_POWER && w5Vanish) && Bob.store(this) > 0) return; // P92 S4 1.6: products into the beast, keep gathering (W5a -Dbots.mine.power: a power miner drops its ore, the beast keeps none)
                 if (bank) {
                     Location b = nearestBank();
                     if (b == null) { finish("No bank close enough to walk to; use Drop here instead."); return; }
@@ -1780,12 +2029,16 @@ public final class AfkTasks implements StartupListener {
                 }
                 return;
             }
+            if (Bob.COMBAT && famPouch != 0 && task.kind == Kind.FIGHT && Bob.combatSummon(this)) { wait = 2; return; } // summon2: fight trips return on the next line, so v1's hook further down never ran for them
             if (task.kind == Kind.FIGHT) { fight(); return; }
+            if (task.kind == Kind.STALL && stallCaught()) return; // P61 (players only: bots never run a STALL task)
             if (busy()) { idleTicks = 0; last = "busy " + p.getPulseManager().getCurrent() + " " + p.scripts.getActiveScript(); return; }
             if (p.getLocation().getDistance(spot) > (essenceMine(spot) ? 40 : 16)) { goTo(State.TO_SPOT, spot); return; } // pathing review 10-23 A-1: the essence rocks are ~21 tiles from the mine's middle (the spot): 16 sent bots back to the middle every ~30 s
             if (p.isArtificial() && ((task == Task.BAIT && p.getInventory().getAmount(313) == 0) || (task == Task.LURE && p.getInventory().getAmount(FEATHER) == 0))) { // audit 10-21 B2
                 finish(task == Task.BAIT ? "Out of bait." : "Out of feathers."); return;
             }
+            if (Bob.ON && bobPouch != 0 && bob == null && !bobTried) { bobTried = true; Bob.summon(this); wait = 2; return; } // P92 S4 1.5: once per leg, at the spot
+            if (Bob.COMBAT && famPouch != 0 && Bob.combatSummon(this)) { wait = 2; return; } // Summoning in combat: at the spot, in multi-combat, when no familiar is out
             if (task.kind == Kind.GROUND) {
                 if (pickUpLoot()) { idleTicks = 0; noTargetTicks = 0; wait = 1; return; }
                 if (++noTargetTicks > 100) { noTargetTicks = 0; relocate(); return; }
@@ -1793,10 +2046,12 @@ public final class AfkTasks implements StartupListener {
                 return;
             }
 
+            if (P90.ON && p.isArtificial() && task == Task.ESSENCE && !hasAny(p, PICKAXES)) { P90.count("stop", P90.STOP, p.getUsername()); finish("No pickaxe for the essence mine."); return; } // P90 fix 1: no re-clicking the rock for 20 min
             Node target;
             switch (task.kind) {
-                case TREE: case PICK: target = nearestScenery(); break;
+                case TREE: case PICK: target = sceneryStill() ? lastScan : nearestScenery(); lastScan = target; break; // P56 perf: a player re-scans 37x37 only when the last target is gone
                 case ROCK: target = nearestRock(); break;
+                case STALL: target = nearestStall(); break; // P61
                 default: target = nearestNpc(); break;
             }
             scanEmpty = target == null; // batch 19c B2: no-gain's spot-depleted sub-code
@@ -1821,8 +2076,70 @@ public final class AfkTasks implements StartupListener {
             }
             if (target instanceof Scenery) { lastNodeAt = target.getLocation(); lastNodeId = ((Scenery) target).getId(); }
             last = "interact " + target.getName() + "@" + target.getLocation();
-            interact(target, task.option, target instanceof NPC ? IntType.NPC : IntType.SCENERY);
+            interact(target, task.kind == Kind.STALL ? stealOption(target) : task.option, target instanceof NPC ? IntType.NPC : IntType.SCENERY);
             wait = 1 + RNG.nextInt(2);
+        }
+
+        // ---- P61 thieving stalls (players only; a bot never gets a STALL task: products null keeps it out of JOBS)
+        int stallCoolUntil, stallCaughtN, stallStepTick; boolean stallStepping;
+        int stallHitSince = -1; // P70 flaw 5: first tick of the current unbroken run of hits (-1 = not being hit)
+        static final int STALL_HIT_MAX = Math.max(10, Integer.getInteger("afk.stallHitMax", 60)); // hit without a break this long: stop
+        static final int STALL_COOL = Math.max(5, Integer.getInteger("afk.stallCool", 20)); // ticks to stay away after being caught
+        static final int STALL_CAUGHT_MAX = Math.max(1, Integer.getInteger("afk.stallCaughtMax", 8)); // caught this often in one run: stop
+
+        /** The stall's own steal option ("Steal-from", "Steal from" or "Steal"; ThievingOptionPlugin takes all three). */
+        String stealOption(Node n) {
+            if (n != null && n.getInteraction() != null) for (Option o : n.getInteraction().getOptions()) if (o != null && o.getName() != null && o.getName().toLowerCase(Locale.ROOT).startsWith("steal")) return o.getName();
+            return task.option;
+        }
+
+        /** Nearest full stall of this task (STALL_IDS: the Stall enum's full ids) within 22 of the spot. */
+        Node nearestStall() {
+            if (scanSkip > 0) { scanSkip--; return null; }
+            int[] want = STALL_IDS.get(task);
+            Scenery best = null; double d = Double.MAX_VALUE;
+            Location c = p.getLocation();
+            for (int dx = -18; dx <= 18; dx++) for (int dy = -18; dy <= 18; dy++) {
+                Scenery s = RegionManager.getObject(c.getZ(), c.getX() + dx, c.getY() + dy);
+                if (s == null || !s.isActive() || !has(want, s.getId()) || s.getLocation().getDistance(spot) > 22) continue;
+                double dist = s.getLocation().getDistance(c);
+                if (dist < d) { d = dist; best = s; }
+            }
+            if (best == null) scanSkip = 3;
+            return best;
+        }
+
+        /**
+         * Caught (the stall owner or a guard attacks: StallThiefPulse's "Hey! Get your hands off there!"): stop fighting back,
+         * step away from the attacker and keep off the stall for STALL_COOL ticks. A real danger still goes through
+         * eatIfNeeded/flee first (STALL counts there like THIEVE). True while stepping away or cooling off.
+         */
+        boolean stallCaught() {
+            if (p.isArtificial()) return false;
+            int now = GameWorld.getTicks();
+            boolean hit = p.inCombat() || !attackers().isEmpty();
+            if (hit) {
+                if (stallHitSince < 0) stallHitSince = now;
+                else if (now - stallHitSince >= STALL_HIT_MAX) { finish("Attacked for " + (now - stallHitSince) + " ticks without a break at the stall; stopping. Try a stall that suits your level."); return true; } // P70 flaw 5: a persistent attacker kept hit true and STALL_CAUGHT_MAX only counts fresh catches
+                boolean again = stallStepping && !p.getWalkingQueue().isMoving() && now - stallStepTick > 10; // still chased once there: step again
+                if (!stallStepping || again) {
+                    if (!stallStepping && ++stallCaughtN >= STALL_CAUGHT_MAX) { finish("Caught at the stall " + stallCaughtN + " times this run; try a stall that suits your level."); return true; }
+                    if (!stallStepping) p.sendMessage("<col=ff0000>AFK: caught stealing, stepping away until it calms down.");
+                    stallStepping = true; stallStepTick = now;
+                    p.getPulseManager().clear();
+                    p.getProperties().getCombatPulse().stop();
+                    Location away = escapePoint();
+                    Path path = Pathfinder.find(p, away);
+                    if (path != null && path.isSuccessful()) path.walk(p);
+                    last = "caught: stepping away to " + away;
+                }
+                stallCoolUntil = now + STALL_COOL;
+                return true;
+            }
+            stallHitSince = -1; // P70 flaw 5
+            if (stallStepping && now < stallCoolUntil) { last = "caught: cooling off"; return true; }
+            stallStepping = false;
+            return false;
         }
 
         static final core.game.node.entity.player.link.prayer.PrayerType[] PROTECTS = {core.game.node.entity.player.link.prayer.PrayerType.PROTECT_FROM_MELEE, core.game.node.entity.player.link.prayer.PrayerType.PROTECT_FROM_MISSILES, core.game.node.entity.player.link.prayer.PrayerType.PROTECT_FROM_MAGIC}; // batch 15 item1
@@ -1896,7 +2213,14 @@ public final class AfkTasks implements StartupListener {
         }
 
         void fight() {
+            { long now = System.currentTimeMillis(), d = now - fightLast; if (fightLast != 0 && d > 0 && d < 5000) fightMs += d; fightLast = now; }
+            if (p.isArtificial()) krHook(); // W1 lane M: real kills for the [KillRate] line (counting only)
+            // W1 lane M: [KillRate] clock (walks and bank runs leave gaps over 5 s: not counted)
             prayerTick();
+            if (W6Combat.PRAYER_STAT && p.isArtificial() && task.kind == Kind.FIGHT) W6Fight.prayTick(this); // W6 (-Dbots.prayer.stat): stat prayers in the fight
+            if (W6Combat.KIT2 && w6 != null) w6.sweep = 0; // W6 (-Dbots.ranged.kit2): a new fight, a new arrow sweep
+            if (p.isArtificial() && task.kind == Kind.FIGHT && SmartAdventurers.style5() && !SmartAdventurers.meleeFallback(p) && outOfStyleAmmo()) return; // train-5 F3
+            if (!p.isArtificial() && (rangedRun || mageRun) && playerOutOfAmmo()) return; // P61
             boolean attacking = p.getProperties().getCombatPulse().isAttacking();
             // Chasing a target we never manage to hit (blocked path, taken by someone else): give up on it.
             if (attacking && !p.inCombat()) {
@@ -1908,6 +2232,12 @@ public final class AfkTasks implements StartupListener {
                     return;
                 }
             } else chaseTicks = 0;
+            if (P91 && task.kind == Kind.FIGHT) { // P91: a fight that can never wound (Slayer too low), e.g. auto-retaliate on an aggressive crawling hand
+                try { Object v = p.getProperties().getCombatPulse().getVictim();
+                    if (v instanceof NPC && cannotWound(p, (NPC) v)) { skipNpcs.add((NPC) v); p.getProperties().getCombatPulse().stop(); p91Count(P91_FIGHT); last = "cannot wound (slayer " + slayerNeed((NPC) v) + ")"; return; }
+                } catch (Throwable ignored) { }
+            }
+            if (Bob.COMBAT2 && famScroll != 0 && (attacking || p.inCombat())) Bob.combatSpecial(this); // Summoning in combat v2: a scroll special through the engine's own call
             if (p.inCombat() || attacking) { lootTicks = 4; last = "combat inC=" + p.inCombat(); boostTick(); if (p.inCombat()) specTick(); return; } // batch 15 items4-5
             // Out of combat but stuck on the same walk or pickup while standing still: let it go.
             Object cur = p.getPulseManager().getCurrent();
@@ -1916,12 +2246,14 @@ public final class AfkTasks implements StartupListener {
             } else { lootPulse = cur; lootStuck = 0; }
             if (p.getWalkingQueue().isMoving()) return;
             if (busy()) { last = "fbusy " + p.getPulseManager().getCurrent() + " " + p.scripts.getActiveScript(); return; }
-            if (loot && lootTicks > 0) { lootTicks--; if (lootTicks == 0 && pickUpLoot()) { lootTicks = 2; } return; }
+            boolean lootOk = !FightRules.LOOT_AFTER || lootOk(); // W2 lane M (-Dbots.fight.lootAfter): fight first, loot after; flag off = true, the two lines below as before
+            if (loot && lootTicks > 0) { lootTicks--; if (lootTicks == 0 && lootOk && pickUpLoot()) { lootTicks = 2; if (FightRules.LOOT_AFTER) lootSince++; } return; }
             if (bury && buryBones()) { wait = 2; return; }
-            if (loot && pickUpLoot()) { wait = 1; return; }
+            if (loot && lootOk && pickUpLoot()) { if (FightRules.LOOT_AFTER) lootSince++; wait = 1; return; }
             if (p.getLocation().getDistance(spot) > 16) { goTo(State.TO_SPOT, spot); return; }
             NPC n = nearestNpc();
             scanEmpty = n == null; // batch 19c B2
+            if (n == null && !p.isArtificial() && task == Task.ROCK_CRAB && wakeCrab()) return; // P61: a sleeping crab ("Rocks") has no attack option; it wakes when you stand by it
             if (n == null) {
                 if (halted) return;
                 if (++noTargetTicks > (collected == 0 && kills == 0 ? 25 : 110)) { noTargetTicks = 0; relocate(); return; }
@@ -1930,14 +2262,116 @@ public final class AfkTasks implements StartupListener {
             }
             noTargetTicks = 0;
             idleTicks = 0;
+            if (!p.isArtificial() && (rangedRun || mageRun) && styleNoXp()) return; // P70 flaw 3
             last = "attack " + n.getName();
-            kills++;
+            kills++; Seed.attack(p, n); Scen.attack(p, n.getLocation()); // W0 A0: scenario kill count (seed flags on only)
+            lootSince = 0; // W2 lane M: a new attack order re-opens the loot allowance (only read under -Dbots.fight.lootAfter)
             p.attack(n);
             wait = 2;
         }
 
+        /**
+         * W2 lane M (-Dbots.fight.lootAfter, only called with the flag on): may fight() pick up ground loot on this step? The rule is
+         * FightRules.lootOk: a bot loots only after an attack order of this trip (kills = attack orders) and at most LOOT_CAP loot
+         * actions per order. lootHeld counts the steps on which a loot-on trip was held back.
+         */
+        boolean lootOk() {
+            boolean ok = FightRules.lootOk(FightRules.LOOT_AFTER, p.isArtificial(), kills, lootSince, FightRules.LOOT_CAP);
+            if (!ok && loot) { lootHeld++; FightRules.LOOT_HELD++; if (kills == 0) { lootHeldFirst++; FightRules.LOOT_HELD_FIRST++; } }
+            return ok;
+        }
+        int lootSince, lootHeld, lootHeldFirst;
+
+        /**
+         * P70 flaw 3 (players): a ranged/magic run whose attacks never land (ammo the bow can't fire: ammoFor accepts any
+         * arrow for an unknown bow) re-attacked every 2 ticks for ever. Counts attack orders since the style skill last gained
+         * xp; after STYLE_NO_XP_MAX of them the run ends. A real fight gains xp on every hit (magic even on a splash).
+         */
+        boolean styleNoXp() {
+            double xp = p.getSkills().getExperience(styleSkill);
+            if (styleXpSeen < 0 || xp > styleXpSeen) { styleXpSeen = xp; styleNoXpAttacks = 0; return false; }
+            if (++styleNoXpAttacks < STYLE_NO_XP_MAX) return false;
+            finish("Your " + (mageRun ? "spells" : "shots") + " gained no " + (mageRun ? "Magic" : "Ranged") + " xp in " + styleNoXpAttacks + " attacks; check your " + (mageRun ? "autocast spell and runes" : "ammo matches your bow") + ".");
+            return true;
+        }
+        double styleXpSeen = -1; int styleNoXpAttacks;
+        static final int STYLE_NO_XP_MAX = Math.max(5, Integer.getInteger("afk.styleNoXpMax", 20));
+
+        /** P61 (players): walk next to the nearest sleeping rock crab ("Rocks", 1266/1268) so it wakes and fights. */
+        boolean wakeCrab() {
+            NPC best = null; double d = Double.MAX_VALUE;
+            for (NPC n : RegionManager.getLocalNpcs(p, 15)) {
+                if (n == null || !n.isActive() || !"Rocks".equalsIgnoreCase(n.getName()) || n.inCombat() || skipNpcs.contains(n) || n.getLocation().getDistance(spot) > 18) continue;
+                double dist = n.getLocation().getDistance(p.getLocation());
+                if (dist < d) { d = dist; best = n; }
+            }
+            if (best == null) return false;
+            if (d <= 1.5) { if (++crabWait > 8) { skipNpcs.add(best); crabWait = 0; } wait = 1; last = "waiting for the crab to wake"; return true; }
+            crabWait = 0;
+            Path path = Pathfinder.find(p, best.getLocation());
+            if (path == null || !path.isSuccessful()) { skipNpcs.add(best); return false; }
+            path.walk(p); wait = 3; last = "waking a rock crab at " + best.getLocation();
+            return true;
+        }
+        int crabWait;
+
+        boolean rangedRun, mageRun; int thrownId = -1; // P61 (players): the fight's style; the thrown weapon's id to re-wield from the pack
+
+        /**
+         * P61 (players): ranged refills the quiver (or the thrown weapon) from the pack and ends the run with a message when
+         * none is left; magic ends it when the autocast spell is gone (the engine clears it when the runes run out).
+         */
+        boolean playerOutOfAmmo() {
+            if (mageRun) {
+                if (p.getProperties().getAutocastSpell() != null) return false;
+                finish("Out of runes: your autocast spell stopped."); return true;
+            }
+            Item w = p.getEquipment().get(3);
+            if (thrownId >= 0) {
+                if (w != null) return false;
+                int n = p.getInventory().getAmount(thrownId);
+                if (n > 0 && p.getInventory().remove(new Item(thrownId, n))) { if (p.getEquipment().add(new Item(thrownId, n), -1, true, false)) { try { p.getEquipment().refresh(); } catch (Throwable ignored) { } return false; } p.getInventory().add(new Item(thrownId, n)); }
+                finish("Out of " + MarketBrain.name(thrownId).toLowerCase(Locale.ROOT) + " to throw."); return true;
+            }
+            if (w == null || !bowLike(w)) { finish("Your bow is no longer wielded."); return true; }
+            Item q = p.getEquipment().get(13);
+            if (q != null && ammoFor(w, q)) return false;
+            for (Item it : p.getInventory().toArray()) {
+                if (it == null || !ammoFor(w, it)) continue;
+                Item all = new Item(it.getId(), p.getInventory().getAmount(it.getId()));
+                if (q != null) continue; // the quiver holds something else: don't swap it
+                if (p.getInventory().remove(all)) { if (p.getEquipment().add(all, -1, true, false)) { try { p.getEquipment().refresh(); } catch (Throwable ignored) { } return false; } p.getInventory().add(all); }
+            }
+            finish("Out of ammo for your " + w.getName() + " (quiver and pack empty)."); return true;
+        }
+
+        /** train-5 F3: a ranger with an empty quiver (after the pack's arrows the bow fires) or a mage whose autocast went (no runes) ends the trip. */
+        boolean outOfStyleAmmo() {
+            int st = SmartAdventurers.styleOf(p);
+            if (st == SmartAdventurers.RANGED) {
+                Item w = p.getEquipment().get(3);
+                if (w == null || SmartAdventurers.bowIndex(w.getId()) < 0 || p.getEquipment().get(13) != null) return false;
+                for (int i = SmartAdventurers.Brain.ARROWS.length - 1; i >= 0; i--) {
+                    int a = SmartAdventurers.Brain.ARROWS[i], n = p.getInventory().getAmount(a);
+                    if (n <= 0 || !SmartAdventurers.bowFires(w.getId(), a)) continue;
+                    if (p.getInventory().remove(new Item(a, n))) { if (p.getEquipment().add(new Item(a, n), -1, true, false)) { try { p.getEquipment().refresh(); } catch (Throwable ignored) { } return false; } p.getInventory().add(new Item(a, n)); }
+                }
+                finish("Out of arrows.");
+                return true;
+            }
+            if (st == SmartAdventurers.MAGIC && SmartAdventurers.castTrip(p) && p.getProperties().getAutocastSpell() == null) { finish("Out of runes."); return true; }
+            return false;
+        }
+
+        /** train-5 F1 D: the bot's own fired arrows on a fight trip (a private ground item of the shooter), unless the quiver holds 200. */
+        boolean ownArrow(GroundItem g) {
+            if (!p.isArtificial() || task.kind != Kind.FIGHT || !SmartAdventurers.isArrow(g.getId()) || !g.droppedBy(p) || !SmartAdventurers.style5()) return false;
+            Item q = p.getEquipment().get(13);
+            return q == null || q.getAmount() < 200;
+        }
+
         boolean pickUpLoot() {
-            if (p.getInventory().isFull()) return false;
+            if (p.getInventory().isFull() && !w6Only) return false; // w6Only: W6Fight.arrowSweep (quiver arrows need no pack room)
             GroundItem nearest = null;
             double d = 9;
             List<GroundItem> near = new ArrayList<>(); // audit B-17: only the 8x8 chunks within 9 tiles, not a copy of the whole world's ground items
@@ -1946,8 +2380,11 @@ public final class AfkTasks implements StartupListener {
                 try { near.addAll(core.game.world.map.RegionManager.getRegionChunk(Location.create(cx << 3, cy << 3, me.getZ())).getItems()); } catch (Throwable ignored) { }
             for (GroundItem g : near) {
                 if (g == null || !g.isActive() || g.isRemoved() || ignored.contains(g)) continue;
+                if (w6Only && !(ownArrow(g) && p.getEquipment().get(13) != null && p.getEquipment().get(13).getId() == g.getId())) continue; // W6 arrow sweep: only the quiver's own arrow
                 if (g.getLocation().getZ() != p.getLocation().getZ()) continue;
                 boolean wanted = products() == null ? g.isAutoSpawn() : has(products(), g.getId());
+                if (!wanted && ownArrow(g)) wanted = true; // train-5 F1 D
+                if (!wanted && Summon.ON && Summon.keepCharm(true, g.getId(), p.isArtificial(), Summon.unlocked(p)) && g.droppedBy(p)) wanted = true; // P62: a bot past Wolf Whistle keeps its charms (-Dbots.summoning)
                 if (!wanted && !(bury && g.getId() == BONES) && !(bury && g.getId() == BIG_BONES)) continue;
                 if (g.isPrivate() && !g.droppedBy(p)) continue;
                 if (litDrop(g)) continue; // P20: a log dropped by a light that failed is not loot (no pick-up/re-light loop)
@@ -1957,6 +2394,12 @@ public final class AfkTasks implements StartupListener {
             if (DEBUG) System.out.println("[AfkTasks] " + p.getUsername() + " loot -> " + nearest);
             if (nearest == null) return false;
             // Standing on or next to it: take it straight away (the walk-to-item route can hang on the same tile).
+            if (d <= 1.5 && ownArrow(nearest)) { // train-5 F1 D: the quiver's own arrow straight back into the quiver; another arrow into the pack (next trip's held())
+                Item q = p.getEquipment().get(13); Item got = new Item(nearest.getId(), nearest.getAmount());
+                if (q != null && q.getId() == nearest.getId()) { if (GroundItemManager.destroy(nearest) != null && !p.getEquipment().add(got, -1, true, false) && !p.getInventory().add(got)) p.getBank().add(got); try { p.getEquipment().refresh(); } catch (Throwable ignored) { } arrowsBack += got.getAmount(); if (W6Combat.KIT2) W6Fight.back(got.getAmount(), w6Only); return true; }
+                if (p.getInventory().hasSpaceFor(got) && GroundItemManager.destroy(nearest) != null) { p.getInventory().add(got); arrowsBack += got.getAmount(); if (W6Combat.KIT2) W6Fight.back(got.getAmount(), w6Only); return true; }
+                ignored.add(nearest); return false;
+            }
             if (d <= 1.5 && p.getInventory().hasSpaceFor(new Item(nearest.getId(), nearest.getAmount()))) {
                 Item got = new Item(nearest.getId(), nearest.getAmount(), nearest.getCharge());
                 if (GroundItemManager.destroy(nearest) != null) p.getInventory().add(got);
@@ -2036,7 +2479,7 @@ public final class AfkTasks implements StartupListener {
             }
             if (state == State.RETREAT || state == State.RECOVER) return false;
             List<NPC> hitting = attackers();
-            if (task.kind != Kind.FIGHT && task.kind != Kind.THIEVE && hitting.isEmpty()) return false;
+            if (task.kind != Kind.FIGHT && task.kind != Kind.THIEVE && task.kind != Kind.STALL && hitting.isEmpty()) return false; // P61: STALL (players only) like THIEVE
             String why = null;
             int cb = 99; try { cb = p.getProperties().getCurrentCombatLevel(); } catch (Throwable ignored) { }
             if (foodCount() == 0 && hp <= Math.max(hit * 2, cb < 60 ? max / 2 : (max * 2) / 5)) why = "low on health with no food left"; // audit B9
@@ -2055,6 +2498,7 @@ public final class AfkTasks implements StartupListener {
         void flee(String why) {
             if (why.startsWith("attacked by") && ++dangerFlees >= 2)
                 quitWhenSafe = "Dangerous monsters keep attacking you here (" + why.substring(12) + "). Pick a safer spot.";
+            try { P87Fight.onFlee(p, why); } catch (Throwable ignored) { } // P87 (-Dbots.fight.fleeBreak)
             if (++retreats > 6) { finish("Retreated too many times (" + why + "); this spot is too tough for now."); return; }
             fleeReason = why;
             if (DEBUG) System.out.println("[AfkTasks] " + p.getUsername() + " flee: " + why);
@@ -2065,6 +2509,7 @@ public final class AfkTasks implements StartupListener {
             retaliateOff();
             p.getSettings().setRunToggled(true);
             Location b = nearestBank(); // pathing review 10-23 A-3: banks this bot may enter only (Shilo's from Karamja ended the trip mid-flight)
+            if (W16.KARA_RETREAT) { Location kb = W16.retreatBank(this, b); if (kb != null) b = kb; } // w20 (-Dbots.fight.karaRetreat, default off): far on Karamja the flee is bound for the bank nearest the Port Sarim landing, so goTo's dock walk can take it
             if (b == null || (b.getDistance(p.getLocation()) <= 3 && !attackers().isEmpty())) b = escapePoint(); // pathing review 10-23 A-2: already at the bank and still hit there: away from them, not "to" where it stands
             Location tele = nearestBank();
             if (tele == null && p.getLocation().getY() > 6400) tele = bankAbove(); // audit B-1: underground, the bank above (nearestBank only knows surface banks); pathing review 10-23 A-3: one it may enter
@@ -2077,6 +2522,7 @@ public final class AfkTasks implements StartupListener {
                 Spectacle.teleport(p, tele); // batch 15 item1
                 b = tele;
                 emergencies++; // combat review 10-23 #2
+                Slayer.exemptLeg(p, "emergency", false, goPaid); // W1 capFix (flag off: no-op)
                 System.out.println("[AfkTasks] " + p.getUsername() + " emergency teleport (" + why + ") to " + tele);
             }
             goTo(State.RETREAT, b);
@@ -2101,6 +2547,59 @@ public final class AfkTasks implements StartupListener {
             return best != null ? best : c.transform(1, 0, 0);
         }
 
+        int safeTicks; boolean safeGave; // W15 safe retreat: recover() calls held so far; the give-up line was written
+
+        /** W15: one antipoison from the bank into the pack (super first, fullest first), by the player rules: at a booth, a free slot, one it owns. Returns its id or -1. */
+        int takeBankAntipoison() {
+            if (p.getInventory().freeSlots() < 1) return -1;
+            for (int f : new int[] {P_SANTI, P_ANTI}) for (int id : POTS[f]) {
+                if (p.getBank().getAmount(id) <= 0 || !p.getBank().remove(new Item(id, 1))) continue;
+                p.getInventory().add(new Item(id));
+                baseline.merge(id, 1, Integer::sum); potsTaken[f]++; dosesAtStart[f] += potDoses(id);
+                return id;
+            }
+            return -1;
+        }
+
+        /**
+         * W15 (-Dbots.fight.safeRetreat): recover() ended a bot's trip ("Teleported out twice", "Out of food.", quitWhenSafe) the
+         * moment nothing attacked it, at any health and still poisoned; nothing heals a bot after finish(), so the poison killed
+         * it on the bank tile. True = stay in RECOVER this call: eat what it carries and, at a booth, take food or an antipoison
+         * from its own bank (eatIfNeeded drinks it). Player rules only: no free cure, no free heal. Poisoned with nothing to eat
+         * or drink, or past the cap: "[SafeRetreat] ... gave up" and the old code runs. Only called with the flag on. No RNG.
+         */
+        boolean safeHold() {
+            Skills s = p.getSkills();
+            int hp = s.getLifepoints(), max = s.getMaximumLifepoints();
+            boolean poisoned = false; try { poisoned = core.api.ContentAPIKt.isPoisoned(p); } catch (Throwable ignored) { }
+            if (FightRules.safeHold(true, p.isArtificial(), hp, max, poisoned, true, 0, 1) == FightRules.SAFE_GO) { safeTicks = 0; safeGave = false; return false; }
+            boolean live = safeTicks < FightRules.SAFE_MAX && !safeGave, booth = live && nearBooth();
+            if (live && !booth && foodCount() == 0 && !foodTrip && quitWhenSafe == null && emergencies < 2 && bankHasFood()) return false; // recover()'s own walk to the bank for food goes first
+            if (booth && poisoned && carriedPot(P_SANTI, P_ANTI) <= 0) {
+                int a = takeBankAntipoison();
+                if (a > 0) System.out.println("[SafeRetreat] " + p.getUsername() + " took an antipoison (" + a + ") from the bank");
+            }
+            if (booth && foodCount() == 0 && bankHasFood()) {
+                int got = restockFood();
+                if (got > 0) { foodTrip = false; System.out.println("[SafeRetreat] " + p.getUsername() + " took " + got + " food from the bank"); }
+            }
+            boolean help = carriedPot(P_SANTI, P_ANTI) > 0 || foodCount() > 0;
+            int d = safeGave ? FightRules.SAFE_GIVE_UP : FightRules.safeHold(true, p.isArtificial(), hp, max, poisoned, help, safeTicks, FightRules.SAFE_MAX);
+            if (d != FightRules.SAFE_HOLD) {
+                if (!safeGave) { safeGave = true; System.out.println("[SafeRetreat] gave up: " + p.getUsername() + " after " + safeTicks + " rests (hp " + hp + "/" + max + " poisoned=" + poisoned + " help=" + help + " booth=" + booth + ")"); }
+                return false;
+            }
+            if (safeTicks++ == 0) System.out.println("[SafeRetreat] " + p.getUsername() + " holds at " + p.getLocation() + " (hp " + hp + "/" + max + " poisoned=" + poisoned + " food=" + foodCount() + " twoTeles=" + (emergencies >= 2) + ")");
+            if (hp * 5 <= max * 3 && GameWorld.getTicks() - lastBite >= 3) { // eatIfNeeded skips a quiet, unpoisoned RECOVER
+                for (Item it : p.getInventory().toArray()) {
+                    if (it == null || !has(FOOD, it.getId()) || has(products(), it.getId())) continue;
+                    api.forceEat(it.getId()); lastBite = GameWorld.getTicks(); break;
+                }
+            }
+            last = "resting until it is safe to go";
+            return true;
+        }
+
         /** Rest somewhere safe until health is back, then go back to work. */
         void recover() {
             Skills s = p.getSkills();
@@ -2109,6 +2608,7 @@ public final class AfkTasks implements StartupListener {
                 return;
             }
             recoverTicks = 0;
+            if (FightRules.SAFE_RETREAT && safeHold()) return; // W15 (-Dbots.fight.safeRetreat, default off): no trip end while poisoned or under half health
             if (quitWhenSafe != null) { finish(quitWhenSafe); return; }
             if (p.isArtificial() && emergencies >= 2) { finish("Teleported out twice this trip; that's enough for one trip."); return; } // combat review 10-23 #2: a cap per trip
             // Safe now, but hungry: if the bank has food, fetch it instead of resting for minutes.
@@ -2116,6 +2616,7 @@ public final class AfkTasks implements StartupListener {
                 Location b = nearestBank();
                 if (b == null && p.isArtificial() && p.getLocation().getY() > 6400 && Ledger.Wallet.payTeleport(p)) { // audit B-1: no walkable bank underground, so teleport to the one above
                     b = bankAbove(); // pathing review 10-23 A-3: one it may enter
+                    Slayer.exemptLeg(p, "bank-above", true, goPaid); // W1 capFix (flag off: no-op)
                     Spectacle.teleport(p, b); // batch 15 item1
                     System.out.println("[AfkTasks] " + p.getUsername() + " teleports out of the dungeon for food to " + b);
                 }
@@ -2210,6 +2711,16 @@ public final class AfkTasks implements StartupListener {
 
         int scanSkip; // after an empty scan, the next two ticks skip it (audit S3: 30,000 long ticks a day from these loops)
 
+        Node lastScan;
+        /** P56 perf (players only): the last scanned tree/crop is still the same object, near, and still offers its action. */
+        boolean sceneryStill() {
+            if (p.isArtificial() || !(lastScan instanceof Scenery)) return false;
+            Location l = lastScan.getLocation();
+            Scenery now = RegionManager.getObject(l.getZ(), l.getX(), l.getY());
+            return now != null && now.getId() == lastScan.getId() && l.getDistance(p.getLocation()) < 15 && (task.option == null || hasOption(now, task.option))
+                    && humanOn(l) == null; // P70 flaw 16: the same yield test as nearestScenery (humanOn is bots-only today, so a player's result is unchanged; this keeps the cache in step if that widens)
+        }
+
         Node nearestScenery() {
             if (scanSkip > 0) { scanSkip--; return null; }
             Scenery best = null;
@@ -2263,11 +2774,14 @@ public final class AfkTasks implements StartupListener {
             for (NPC n : RegionManager.getLocalNpcs(p, 15)) {
                 if (n == null || !n.isActive() || !nameMatches(n.getName()) || skipNpcs.contains(n)) continue;
                 if (n.getLocation().getDistance(spot) > 18) continue;
+                if (task == Task.BIG_NET && !has(BIGNET_SPOTS, n.getId())) continue; // P76 D3: not the small-net spots
+                if (w5SpotRule != 0 && !W5aSkills.spotOk(w5SpotRule, has(BIGNET_SPOTS, n.getId()))) continue; // W5a (-Dbots.fish.shark): sharks only on Net/Harpoon spots, tuna/swordfish never there
                 if (task.kind == Kind.FIGHT) {
                     if (!n.getDefinition().hasAction("attack")) continue;
                     if (!n.getProperties().isMultiZone() && n.inCombat()) continue;
                     Player fighting = humanFighting(n); if (fighting != null) { yieldTo(fighting); continue; } // theirs, even in multi
                     if (dangerOf(n) != null) { tooStrong = n; continue; }
+                    if (P91 && cannotWound(p, n)) { tooStrong = n; p91Count(P91_PICK); continue; } // P91: its hits would all be zeroed
                 } else if (!hasOption(n, task.option)) continue;
                 double dist = n.getLocation().getDistance(p.getLocation());
                 // Auto mode prefers the toughest safe target (more xp per kill); everything else just the closest.
@@ -2275,7 +2789,8 @@ public final class AfkTasks implements StartupListener {
                 if (score > bestScore) { bestScore = score; best = n; }
             }
             if (best == null && tooStrong != null && ++strongSeen > 20) {
-                finish("Everything here is too strong for you right now: " + dangerOf(tooStrong) + ".");
+                if (P91 && cannotWound(p, tooStrong)) finish("You need Slayer " + slayerNeed(tooStrong) + " to wound these."); // P91
+                else finish("Everything here is too strong for you right now: " + dangerOf(tooStrong) + ".");
             }
             if (best != null) strongSeen = 0;
             if (skipNpcs.size() > 30) skipNpcs.clear();
@@ -2283,6 +2798,8 @@ public final class AfkTasks implements StartupListener {
         }
 
         int strongSeen, chaseTicks, kills;
+        int npcKills, famKills; boolean krHooked; Object krFam; // W1 lane M: NPC deaths the engine credited to this bot or to its familiar (KR_KILL)
+        long fightMs, fightLast; // W1 lane M: time spent in fight() this trip, for the [KillRate] line (logging only)
         final Set<NPC> skipNpcs = new HashSet<>();
 
         int myLevel() {
@@ -2322,6 +2839,23 @@ public final class AfkTasks implements StartupListener {
             return n;
         }
 
+        /** W5a (-Dbots.cook.fire): far from a range, light a fire here from a log in the pack and cook on it (the bots' cooking is
+         *  simulated: cook() runs once the lighting pulse ends). False = not here (no kit, a range near, a tile that takes no fire). */
+        boolean fireCook(Location range) {
+            double rd = range == null ? 999 : range.getDistance(p.getLocation());
+            int fm = p.getSkills().getStaticLevel(Skills.FIREMAKING);
+            Item log = null;
+            for (int[] l : W5aSkills.LINE_LOGS) if (fm >= l[1] && (log = packItem(l[0])) != null) break;
+            boolean tileOk;
+            try { tileOk = !p.getZoneMonitor().isInZone("bank") && RegionManager.getObject(p.getLocation()) == null; } catch (Throwable t) { tileOk = false; }
+            if (!W5aSkills.fireOrRange(true, rd, p.getInventory().getAmount(590) > 0, log != null, tileOk)) return false;
+            try { p.getPulseManager().run(new content.global.skill.firemaking.FireMakingPulse(p, log, null)); } catch (Throwable t) { return false; }
+            W5aSkills.firesLit++;
+            System.out.println("[W5a] fire " + p.getUsername() + " lit a fire to cook " + rawFishCount() + " fish at " + p.getLocation().getX() + "," + p.getLocation().getY() + " (range " + (range == null ? "none" : (int) rd + " tiles") + ", Firemaking " + fm + ")");
+            processing = "cook"; w5Fire = true; state = State.SMELTING; last = "lighting a fire to cook"; wait = 1;
+            return true;
+        }
+
         void dropProducts() {
             Map<Integer, Integer> budget = new HashMap<>(baseline);
             for (Item it : p.getInventory().toArray()) {
@@ -2330,6 +2864,8 @@ public final class AfkTasks implements StartupListener {
                 int n = gainedIn(it, budget);
                 if (n <= 0) continue;
                 if (p.getInventory().remove(new Item(it.getId(), n))) {
+                    if (w5Vanish && w8Power != 0) { W8Polish.powerDropped(w8Power, n); continue; } // W8 (-Dbots.wc.power / -Dbots.fish.power): the logs / fish are gone, no ground item
+                    if (w5Vanish) { W5aSkills.powerDropped += n; continue; } // W5a (-Dbots.mine.power): a power miner's ore is gone, not left for anyone to pick up
                     GroundItem g = GroundItemManager.create(new Item(it.getId(), n), p.getLocation(), p);
                     if (g != null) ignored.add(g); // never pick our own drops back up
                 }
@@ -2356,7 +2892,11 @@ public final class AfkTasks implements StartupListener {
         boolean keep(Item it) {
             int id = it.getId();
             if (has(task.tools, id) || has(AXES, id) || has(PICKAXES, id) || id == COINS) return true;
+            if (Bob.ON && bobPouch != 0 && id == bobPouch) return true; // P92 S4 1.4: the trip's pouch is never banked or sold
+            if (Bob.COMBAT && famPouch != 0 && id == famPouch) return true; // Summoning in combat: the same for the trip's combat pouch
+            if (Bob.COMBAT2 && famScroll != 0 && id == famScroll) return true; // Summoning in combat v2: and for its scrolls
             if (AfkMagic.keeps(this, id)) return true; // batch 25: the spell's runes stay in the pack
+            if (p.isArtificial() && task.kind == Kind.FIGHT && SmartAdventurers.isArrow(id) && !has(products(), id) && SmartAdventurers.style5()) return true; // train-5 F1 D: picked-up arrows are next trip's, not leftovers to sell
             if (id == 313 && task == Task.BAIT) return true;
             if (id == FEATHER && task == Task.LURE) return true;
             if (id >= 1823 && id <= 1831 && (id & 1) == 1) return true; // combat review 10-23 #9: waterskins (full to empty) stay in the pack for the next desert trip
@@ -2386,9 +2926,14 @@ public final class AfkTasks implements StartupListener {
             return got;
         }
 
+        /** w36-silent2 (-Dbots.farming.trees2fire, W36Silent.nestFor): a bird's nest seed goes into the finder's own bank (review fix 2: never Ledger.supply, so no clerk coins). */
+        private void w36Nest(Player p) {
+            try { final core.game.container.Container b36 = p.getBank(); int seed = b36 == null ? 0 : W36Silent.nestFor(true, id -> b36.getAmount(id) + p.getInventory().getAmount(id)); if (seed > 0 && b36.add(new Item(seed, 1))) System.out.println("[W36] nest " + p.getUsername() + " found " + W36Silent.seedName(seed) + " in a bird's nest (log haul " + W36Silent.logHauls + ", kept in the bank)"); } catch (Throwable ignored) { }
+        }
         void deposit() {
             if (p.isArtificial() && bankPause == 0) { bankPause = 1; wait = 8 + RNG.nextInt(9); return; } // stands at the booth a few seconds, like a player sorting the bank
             bankPause = 0;
+            if (W7cSkills.FLETCH_OWN && w7Fletch > 1) { W7cHooks.fletchDone(this); w7Fletch = 1; } // W7c: the next pack may be fletched again
             Scenery booth = null;
             Location c = p.getLocation();
             for (int dx = -7; dx <= 7 && booth == null; dx++) for (int dy = -7; dy <= 7; dy++) {
@@ -2416,7 +2961,10 @@ public final class AfkTasks implements StartupListener {
                 if (n <= 0) continue;
                 Item part = new Item(it.getId(), n, it.getCharge());
                 boolean sellable = !(task.kind == Kind.SMELT && !has(BARS, it.getId())) // never sell the ores we smelt from
-                        && !(task.kind == Kind.BANK && !has(finalIds, it.getId())); // batch 23 T4: a bank loop sells only what it made (left-over bars, logs, raw fish go back)
+                        && !(task.kind == Kind.BANK && !has(finalIds, it.getId())) // batch 23 T4: a bank loop sells only what it made (left-over bars, logs, raw fish go back)
+                        && !(PrayerRun.ON && p.isArtificial() && PrayerRun.keepBone(true, it.getId(), p.getSkills().getStaticLevel(core.game.node.entity.skill.Skills.PRAYER), bankC.getAmount(it.getId())) && SmartAdventurers.brainOf(p) != null) // P53b: a smart bot banks its own bones to bury (-Dbots.prayerRun)
+                        && !(Summon.ON && Summon.isCharm(it.getId())) // P62: charms are untradeable: always banked, never into the Ledger (-Dbots.summoning)
+                        && !(W6Herbs.HERBS2 && p.isArtificial() && SmartAdventurers.brainOf(p) != null && W6Herbs.keepSeed(true, Farming.HERB_SEEDS, it.getId(), p.getSkills().getStaticLevel(core.game.node.entity.skill.Skills.FARMING), bankC.getAmount(it.getId()), p.getUsername(), System.currentTimeMillis())); // W6 (-Dbots.farming.herbs2): a smart bot banks a herb seed it can plant (under 10 held), not sold
                 if (sell && sellable) {
                     // Sold to the GE bots at the guide price; the goods join the bots' GE stock.
                     int price = priceById.computeIfAbsent(it.getId(), Runner::guidePrice); // runner profiling 10-23
@@ -2434,9 +2982,11 @@ public final class AfkTasks implements StartupListener {
                         continue;
                     }
                 }
-                if (bankC.add(part)) { p.getInventory().remove(part); moved++; }
+                if (bankC.add(part)) { p.getInventory().remove(part); moved++; if (Summon.ON && Summon.isCharm(part.getId())) Summon.CHARMS_KEPT += n; }
             }
             for (Map.Entry<Integer, Integer> w : worldById.entrySet()) { try { Ledger.supply(null, w.getKey(), w.getValue()); } catch (Throwable ignored) { } } // runner profiling 10-23
+            if (W36Silent.TREES2 && p.isArtificial() && task != null && task.kind == Kind.TREE && !haulById.isEmpty()) w36Nest(p); // w36-silent2 (-Dbots.farming.trees2fire): every NEST_EVERY-th banked log haul finds a tree seed
+            if (p.isArtificial() && SmartAdventurers.Brain.BROKE_JOB && !haulById.isEmpty() && Ledger.Wallet.coins(p) < SmartAdventurers.Brain.BROKE_LINE && brokeShopSale(p, haulById, priceById) > 0) haulById.clear(); // P40 B4: broke: the shop pays now
             // The whole haul per item type: offer it to whoever is in this bank first (Deals keeps it in the bank
             // meanwhile), otherwise it goes on the Exchange through the ledger.
             for (Map.Entry<Integer, Integer> h : haulById.entrySet()) {
@@ -2454,6 +3004,7 @@ public final class AfkTasks implements StartupListener {
                 p.sendMessage("<col=0b5e1f>AFK: sold " + soldItems + " items for " + amt + " coins (" + soldCoins + " this session), coins are in your bank.");
                 if (overlay != null) overlay.setTitle("AFK: " + label() + " (" + soldCoins + " gp)");
             }
+            if (Bob.ON && (bob != null || bobPouch != 0) && Bob.bankPass(this)) return; // P92 S4 1.7: Withdraw-All from the beast, then bank again
             lastCount = countProducts();
             if (moved == 0 && p.getInventory().isFull()) { finish("Bank is full or nothing to deposit."); return; }
             if (!finishing) restockFood();
@@ -2496,6 +3047,15 @@ public final class AfkTasks implements StartupListener {
         }
 
         Location nearestFurnace() {
+            if (p.isArtificial()) return nearestFurnace0();
+            Location here = p.getLocation();
+            boolean west = here.getX() < 3268; // P70 flaw 17: nearestFurnace0 skips Al Kharid's furnace west of the gate (x<3268), so the side is part of the key
+            if (furnCacheFrom != null && furnCacheState == state && furnCacheWest == west && furnCacheFrom.getZ() == here.getZ() && furnCacheFrom.getDistance(here) <= 6) return furnCache;
+            furnCache = nearestFurnace0(); furnCacheFrom = here; furnCacheState = state; furnCacheWest = west;
+            return furnCache;
+        }
+
+        Location nearestFurnace0() {
             Location best = null;
             double d = 220;
             for (Location f : FURNACES) {
@@ -2739,6 +3299,10 @@ public final class AfkTasks implements StartupListener {
         String processing = "smelt";
 
         static final Location[] RANGES = {Location.create(3211, 3215, 0), Location.create(2817, 3443, 0), Location.create(3273, 3180, 0), Location.create(2970, 3210, 0)};
+        /** P78b (bots only: their cooking is simulated on arrival, a player's needs the range object next to them): the Varrock
+         *  west house range (survey cell 3160-3167x3424-3431, 115 sightings), walk tile 3161,3428 (p38-navport: 115 tiles from the
+         *  Barbarian Village lure spot, 3164,3428 is behind the house wall). Lets the lure chain fit legMax 150. */
+        static final Location[] BOT_RANGES = {Location.create(3161, 3428, 0)};
 
         Location nearestRange() {
             Location best = null;
@@ -2748,6 +3312,7 @@ public final class AfkTasks implements StartupListener {
                 double dist = r.getDistance(p.getLocation());
                 if (dist < d) { d = dist; best = r; }
             }
+            if (p.isArtificial() && Batch29.on(Batch29.CHAINS)) for (Location r : BOT_RANGES) { double dist = r.getDistance(p.getLocation()); if (dist < d) { d = dist; best = r; } } // P78b
             if (!p.isArtificial()) for (Location r : extraStations(RANGES, Artisans.Trade.COOKING.spots, p.getLocation(), "place:range", "place:cooking range")) { // batch 23 T5: players only, found ones within 220
                 if (behindToll(r)) continue;
                 double dist = r.getDistance(p.getLocation());
@@ -2783,14 +3348,18 @@ public final class AfkTasks implements StartupListener {
                 if (c == null || c[1] > lvl) continue;
                 if (p.getInventory().remove(new Item(it.getId(), 1))) {
                     // Burns like a player would: more often at low level, never past 40 over the requirement.
-                    boolean burnt = RNG.nextInt(100) < Math.max(0, 35 - (lvl - c[1]));
+                    boolean w5 = W5aSkills.COOK_BURN && p.isArtificial(); // W5a (-Dbots.cook.burn): the engine's burn rate (a fire's or a range's) and no xp for a burnt fish
+                    boolean burnt = w5 ? W5aSkills.burnt(true, it.getId(), lvl, c[1], w5Fire, RNG.nextDouble() * 100, RNG.nextInt(100)) : RNG.nextInt(100) < Math.max(0, 35 - (lvl - c[1]));
                     if (!burnt) { p.getInventory().add(new Item(c[0])); cooked++; }
-                    p.getSkills().addExperience(Skills.COOKING, 30, true);
+                    if (w5) { if (burnt) { w5Burnt++; W5aSkills.burntN++; } else W5aSkills.cookedN++; }
+                    p.getSkills().addExperience(Skills.COOKING, p.isArtificial() ? (w5 && burnt ? 0 : 30) : burnt ? 0 : cookXp(it.getId()), true); // P56 A4: a player gets the fish's own xp, none for a burnt one (bots keep the flat 30)
                     done++;
                 }
             }
             if (done > 0) { p.animate(new Animation(896)); last = "cooking"; wait = 1; return; }
             if (!p.isArtificial()) { afterProcess(); return; } // batch 23 T4: a player's chain delivers its own way (bank, sell or drop)
+            if (W5aSkills.COOK_BURN && (w5Burnt > 0 || cooked > 0)) System.out.println("[W5a] cook " + p.getUsername() + " at Cooking " + lvl + " on a " + (w5Fire ? "fire" : "range") + ": " + cooked + " cooked this trip, " + w5Burnt + " burnt this stop");
+            w5Burnt = 0; w5Fire = false;
             Location bk = nearestBank();
             if (bk == null) { finish("No bank close enough to walk to."); return; }
             lastCount = countProducts();
@@ -2798,6 +3367,31 @@ public final class AfkTasks implements StartupListener {
         }
 
         int cooked;
+        int smeltStartFails;
+
+        /** P56 A1: a player's furnace leg (TO_FURNACE / SMELTING with processing "smelt") that makes no bar for SMELT_GIVEUP_TICKS stops with a message, instead of standing there for ever. Bots unchanged. */
+        static final int SMELT_GIVEUP_TICKS = Integer.getInteger("afk.smeltGiveUp", 400);
+        int furnaceSince = -1, furnaceBars;
+        boolean furnaceStalled() {
+            if (p.isArtificial() || !"smelt".equals(processing) || state != State.TO_FURNACE && state != State.SMELTING) { furnaceSince = -1; return false; }
+            int t = GameWorld.getTicks(), bars = 0;
+            for (Item it : p.getInventory().toArray()) if (it != null && has(BARS, it.getId())) bars += it.getAmount();
+            if (furnaceSince == -1 || bars > furnaceBars) { furnaceSince = t; furnaceBars = bars; return false; }
+            furnaceBars = bars;
+            if (t - furnaceSince < SMELT_GIVEUP_TICKS) return false;
+            furnaceSince = -1;
+            finish((state == State.TO_FURNACE ? "Couldn't reach the furnace" : "Smelting made no bars") + " for " + (SMELT_GIVEUP_TICKS * 6 / 600) + " minutes (" + (last == null || last.isEmpty() ? state.name().toLowerCase(Locale.ROOT) : last) + "). Stopped.");
+            return true;
+        }
+
+        /** P56 A4: cooking xp per raw fish (2009 values); 30 for anything not listed. */
+        static double cookXp(int raw) {
+            switch (raw) {
+                case 317: case 321: return 30; case 327: return 40; case 345: return 50; case 353: return 60; case 335: return 70;
+                case 341: return 75; case 349: return 80; case 331: return 90; case 359: return 100; case 377: return 120;
+                case 363: return 130; case 371: return 140; case 7944: return 150; case 383: return 210; default: return 30;
+            }
+        }
 
         /** The station step: smelting here, cooking in cook(), every other process in processStep() (batch 23 T4). */
         void smelt() {
@@ -2809,6 +3403,13 @@ public final class AfkTasks implements StartupListener {
                 int n = setsOf(b, p.getInventory());
                 last = "smelting " + n + " " + b.name();
                 p.getPulseManager().run(new SmeltingPulse(p, null, b, n));
+                if (!p.isArtificial() && !p.getPulseManager().hasPulseRunning()) { // P56 A1: the pulse checks the furnace, level and ores at start and can stop at once
+                    last = "the furnace didn't start (" + b.name().toLowerCase(Locale.ROOT) + ")";
+                    if (++smeltStartFails >= 3) finish("The furnace wouldn't smelt " + b.getProduct().getName().toLowerCase(Locale.ROOT) + "s here (3 tries). Stopped; the ores are in your pack.");
+                    wait = 2;
+                    return;
+                }
+                smeltStartFails = 0;
                 barsMade += n;
                 wait = 2;
                 return;
@@ -2987,6 +3588,7 @@ public final class AfkTasks implements StartupListener {
             if (r == null) { afterProcess(); return; }
             if (pr.tool > 0 && !hasAny(p, ids(pr.tool))) { finish("No " + pr.toolName().replaceFirst("^an? ", "") + " in the pack any more."); return; }
             if (!atStation(pr.station)) return;
+            if (SmithOwn.ON && pr == Process.SMITH && SmithOwn.pulse(this, r)) { wait = 2; return; } // W8 (-Dbots.smith.own): a bot's own bars, the engine's SmithingPulse
             switch (pr) {
                 case SMITH: case FLETCH: makeOne(r); return;
                 case BURN: light(r); return;
@@ -3193,7 +3795,7 @@ public final class AfkTasks implements StartupListener {
         boolean waitingTold;
 
         void relocate() {
-            Spot[] list = questSpots != null ? questSpots : SPOTS.get(task);
+            Spot[] list = questSpots != null ? questSpots : spotsFor(task, p.isArtificial());
             Spot found = null;
             if (list == null && !p.isArtificial() && questSpots == null && !questHold) found = foundSpot(); // batch 23 T5: no SPOTS for this job: the surveyors' clusters, then HuntMap
             if (found != null) { goFound(found); return; }
@@ -3201,6 +3803,7 @@ public final class AfkTasks implements StartupListener {
                 if (p.isArtificial()) { finish(collected == 0 ? "Nothing to hunt here." : "Spot ran dry."); return; } // bots pick a new job
                 // No other spot known for this task: keep waiting here for respawns instead of quitting.
                 if (!waitingTold) { waitingTold = true; p.sendMessage("<col=0b5e1f>AFK: nothing here right now, waiting for respawns."); }
+                respawnWait();
                 return;
             }
             Spot best = null;
@@ -3213,12 +3816,49 @@ public final class AfkTasks implements StartupListener {
             }
             if (best == null && !p.isArtificial() && questSpots == null && !questHold) best = foundSpot(); // batch 23 T5: SPOTS first, then the found ones (bots: unchanged)
             if (best == null) {
-                if (questHold) { triedSpots.clear(); return; } // a quest kill waits for respawns where the quest says
+                if (questHold) { triedSpots.clear(); respawnWait(); return; } // a quest kill waits for respawns where the quest says
                 if (collected == 0) { finish("Nothing for " + label().toLowerCase(Locale.ROOT) + " here, and I've tried every spot I know nearby."); return; }
                 triedSpots.clear(); // everything was busy: wait here for respawns and try the round again later
+                respawnWait();
                 return;
             }
             goFound(best);
+        }
+
+        /** P56 A3: a player's runner waiting for respawns (no spot left to try) gives up after RESPAWN_GIVEUP_TICKS without a gain; bots unchanged. */
+        static final int RESPAWN_GIVEUP_TICKS = Integer.getInteger("afk.respawnGiveUp", 500);
+        int respawnWaitSince = -1, respawnWaitLast = -1;
+        void respawnWait() {
+            if (p.isArtificial()) return;
+            int t = GameWorld.getTicks();
+            boolean steady = respawnWaitLast >= 0 && t - respawnWaitLast <= 200; // relocate() runs every 100-110 ticks while nothing is there; a longer gap means a target came back
+            respawnWaitLast = t;
+            if (respawnWaitSince < 0 || !steady) { respawnWaitSince = t; return; }
+            int giveUp = respawnGiveUp(); // P70 flaw 18
+            if (t - respawnWaitSince < giveUp) return;
+            respawnWaitSince = -1;
+            finish("Nothing for " + label().toLowerCase(Locale.ROOT) + " has come back here for " + Math.max(1, giveUp * 6 / 10 / 60) + " minutes, and there is no other spot to try. Stopped" + (collected > 0 ? " (" + collected + " collected)." : "."));
+        }
+
+        /**
+         * P70 flaw 18 (players): the respawn give-up scaled by the target's respawn time, so a real wait for a slow node is not
+         * cut short: at least RESPAWN_GIVEUP_TICKS, else twice the slowest respawn of the task's target plus one relocate()
+         * period. Respawn ticks are the long end of the RS2 times (runite 12 min, adamantite 4, mithril 2; magic trees up to
+         * ~6 min, yews ~3, maples ~1.5). The best_* tasks use what the level can take.
+         */
+        int respawnGiveUp() { return Math.max(RESPAWN_GIVEUP_TICKS, 2 * respawnTicks() + 110); }
+        int respawnTicks() {
+            switch (task) {
+                case RUNITE: return 1200;
+                case ADAMANT: return 400;
+                case MITHRIL: return 200;
+                case MAGIC: return 600;
+                case YEW: return 300;
+                case MAPLE: return 150;
+                case BEST_ROCK: { int m = p.getSkills().getStaticLevel(Skills.MINING); return m >= 85 ? 1200 : m >= 70 ? 400 : m >= 55 ? 200 : 0; }
+                case BEST_TREE: { int w = p.getSkills().getStaticLevel(Skills.WOODCUTTING); return w >= 75 ? 600 : w >= 60 ? 300 : w >= 45 ? 150 : 0; }
+                default: return 0;
+            }
         }
 
         void goFound(Spot best) {
@@ -3289,13 +3929,24 @@ public final class AfkTasks implements StartupListener {
             return best;
         }
 
+        /** P56 perf: players reuse the last answer while the state is the same and they are within 6 tiles of where it was asked (it loops every bank with Gates.canEnter, 2-3 times a tick). Bots unchanged. */
+        State bankCacheState, furnCacheState; Location bankCacheFrom, bankCache, furnCacheFrom, furnCache; boolean furnCacheWest; // P70 flaw 17
         Location nearestBank() {
+            if (p.isArtificial()) return nearestBank0();
+            Location here = p.getLocation();
+            if (bankCacheFrom != null && bankCacheState == state && bankCacheFrom.getZ() == here.getZ() && bankCacheFrom.getDistance(here) <= 6) return bankCache;
+            bankCache = nearestBank0(); bankCacheFrom = here; bankCacheState = state;
+            return bankCache;
+        }
+
+        Location nearestBank0() {
             if (essenceMine(p.getLocation())) return Location.create(3253, 3421, 0); // Varrock east, through the portal
+            if (!p.isArtificial() && p.getLocation().getZ() == 2 && p.getLocation().getDistance(LUMBRIDGE_UPSTAIRS_BANK) < 15) return Location.create(3208, 3220, 2); // P56 A1: a player already up in Lumbridge castle banks there (the walk to Draynor never left the floor)
             Location best = null;
             double d = 220;
             for (Location b : BANKS) {
                 // Al Kharid's bank is behind the toll gate; only use it from inside Al Kharid.
-                if (b.getX() == 3270 && p.getLocation().getX() < 3268) continue;
+                if (Slayer.tollShut9(Slayer.FIX9 && p.isArtificial(), b, p.getLocation(), Runner::desertSide)) continue; // slayer9: flag off = b.getX() == 3270 && x < 3268, as before
                 if (!Gates.canEnter(p, b)) continue; // pathing review 10-23 A-3: from Karamja the nearest was Shilo's (a quest box): the flee, the bank walk and finish() all ended at its edge
                 double dist = b.getDistance(p.getLocation());
                 if (dist < d && !playerBankShut(b)) { d = dist; best = b; }
@@ -3307,6 +3958,7 @@ public final class AfkTasks implements StartupListener {
                 double dist = b.getDistance(p.getLocation());
                 if (dist < d && !playerBankShut(b)) { d = dist; best = b; }
             }
+            if (best != null && p.isArtificial() && Hubs.on()) { final Location from = p.getLocation(); best = Hubs.bankFor(from, best, b -> !Slayer.tollShut9(Slayer.FIX9, b, from, Runner::desertSide) && Gates.canEnter(p, b) && !playerBankShut(b) && b.getDistance(from) < 220); } // batch 27 fix 1: not a bank inside an over-band hub when another this bot may use is within +60 tiles (-Dhubs.bank)
             return best;
         }
 
@@ -3349,19 +4001,25 @@ public final class AfkTasks implements StartupListener {
             boolean boatOk = !noBoat; noBoat = false; boat = null;
             state = s; dest = where; best = Double.MAX_VALUE; sinceProgress = 0; retries = 0; stallTeles = 0; // batch 22 B21-8
             walkFrom = p.getLocation(); // batch 18 item2
+            walkFinds = 0; // P61: a new walk attempt gets its own search budget (players)
             viaSeen.clear(); viaSkip.clear(); doorsTried.clear(); doorAt = null; progTick = GameWorld.getTicks(); // P16 item 2
             viaSent = null; viaDone.clear(); viaAim = null; // b26 loops fix 2 / P32: vias reached count this trip only
             replanned = false; loopSince = Failures.sec(System.currentTimeMillis()); loopLast = null; // batch 23 T2: a player's loop ring counts this trip only, with one re-plan per trip
             Watchdog.ftrip(p, walkFrom); if (s == State.RETREAT) Watchdog.fdrv(p, Failures.DRV_FLEE); // batch 19a: the trip's start; a retreat is a flee (bots only, inside)
             p.getPulseManager().clear();
-            underDest = null;
+            underDest = null; upDest = null; // P90
             boolean telePending = p.getProperties().getTeleportLocation() != null; // pathing review 10-23 A-4: flee()/recover() just paid for one (it lands next tick, so getLocation() is still the old tile)
             if (p.isArtificial() && where != null && essenceMine(p.getLocation()) && !essenceMine(where)) { // leaving through the portal to Aubury's shop
-                p.getProperties().setTeleportLocation(Location.create(3253, 3398, 0));
+                Bob.tele(p).getProperties().setTeleportLocation(Location.create(3253, 3398, 0));
             }
+            if (p.isArtificial() && !telePending && Exit1.free(Exit1.ON, p.getLocation(), where, TELEPORT_MIN)) { telePending = true; Exit1.left(p, "the rune essence mine"); } // exit1 (-Dnav.freeExit): the portal above is free and lands at Aubury, so a goal within TELEPORT_MIN of Aubury is walked from there: no fare from the mine tile (it measured ~1,400 tiles), no boat, no forced teleport
             Location[] ent = p.isArtificial() && where != null && where.getY() > 6400 && p.getLocation().getY() < 6400 ? entrance(where) : null;
             if (ent == null && p.isArtificial() && where != null && essenceMine(where) && !essenceMine(p.getLocation())) ent = new Location[]{Location.create(3253, 3401, 0), Location.create(3253, 3401, 0), where}; // Aubury teleports you in
             if (ent != null) { underDest = where; dest = where = ent[1]; if (Boolean.getBoolean("afk.debug")) System.out.println("[AfkTasks] " + p.getUsername() + " heading for the dungeon entrance at " + ent[1] + " from " + p.getLocation()); } // the owner 2026-10-20: walk in through the town, not teleport into the dungeon
+            Location[] up = p.isArtificial() && ent == null && !telePending ? P90.climbOut(p.getLocation(), where) : null; // P90 fix 2: out of a known dungeon the way in, free (a broke bot walked at the wall)
+            if (up != null && (walker || Ledger.Wallet.coins(p) < Preflight.fare() || where.getDistance(up[1]) <= TELEPORT_MIN)) {
+                upDest = where; dest = where = up[0]; P90.count("climb", P90.CLIMB, p.getUsername() + " from " + p.getLocation().getX() + "," + p.getLocation().getY() + " for " + upDest.getX() + "," + upDest.getY());
+            }
             // Bots on a long trip teleport, like a player using a teleport spell; anything under ~320 tiles is walked
             // (the owner's answer to the review: players didn't burn a law rune to go Draynor to Falador).
             if (travels() && where != null && !Gates.canEnter(p, where)) { // a quest, skill or key the bot doesn't have: no going there (batch 23 T2: a player gets the same refusal as a message)
@@ -3391,7 +4049,9 @@ public final class AfkTasks implements StartupListener {
                 Location landAt = out ? BOAT_LAND_KARAMJA : BOAT_LAND_SARIM;
                 boolean farOn = where.getDistance(landAt) > TELEPORT_MIN; // batch 16 review: bound far past the landing, the teleport straight away as batch 14 did (it paid 30 gp for the boat and then the teleport too)
                 boolean fareFits = p.getInventory().getAmount(995) >= BOAT_FARE || p.getInventory().freeSlots() > 0; // batch 16 review: pocketCoins can't move the fare into a full pack (the crossing failed after a dead walk)
-                if (!farOn && fareFits && board.getDistance(p.getLocation()) <= BOAT_NEAR && (out || QuestPiratesTreasure.onKaramja(p))) {
+                boolean w20Lift = W16.KARA_ANY && W16.dockWalk(W16.KARA_RETREAT, W16.DOCK_WALK, s == State.RETREAT, out, !crossOnly && karamja(p.getLocation()), Ledger.Wallet.coins(p), BOAT_FARE, fareFits, farOn); // w20: asked once; flags off = false, nothing read
+                if (!farOn && fareFits && (board.getDistance(p.getLocation()) <= BOAT_NEAR || w20Lift) && W16.boatHere(out, QuestPiratesTreasure.onKaramja(p), w20Lift)) { // W16 (-Dbots.fight.karaRetreat / -Dbots.kara.dockWalk, default off): off Karamja the dock is walked to from anywhere on the island (W16 review: not a shop walk's crossSea, whose pulse stops after 300 ticks: that keeps the 120-tile rule)
+                    if (W16.KARA_ANY && board.getDistance(p.getLocation()) > BOAT_NEAR) { W16.dockLine(p, s == State.RETREAT, (int) board.getDistance(p.getLocation()), asked); try { NavWalker.shadow(p, board, "goTo " + s + " dock"); } catch (Throwable ignored) { } }
                     boat = new Boat(out, asked, s, board);
                     dest = board; last = "walking to the boat";
                     return !halted;
@@ -3400,9 +4060,10 @@ public final class AfkTasks implements StartupListener {
             if (p.isArtificial() && !telePending && (!walker || acrossSalve || mustTele) && where != null && (where.getDistance(p.getLocation()) > TELEPORT_MIN || acrossSalve || mustTele)) { // pathing review 10-23 A-4: not a second charge (and landing) on top of a teleport already paid for // across the Salve even a walker pays (payTeleport decides)
                 // A teleport costs what a player pays: a law rune and three airs (coin sink A6). No coins, no teleport.
                 Location land = ent != null ? ent[0] : Watchdog.landing(where); // never straight into a fenced-off spot
-                if (Ledger.Wallet.payTeleport(p, acrossSea ? "sea-crossing" : "long-teleport")) { Spectacle.teleport(p, land); last = "teleported"; } // batch 15 item1
+                if (Ledger.Wallet.payTeleport(p, acrossSea ? "sea-crossing" : "long-teleport")) { Slayer.exemptLeg(p, "return", !acrossSea && (where.getY() > 6400 || underDest != null), goPaid); goPaid++; Spectacle.teleport(p, land); last = "teleported"; } // batch 15 item1; W1 capFix: the trip's later teleports back down to a dungeon spot are exempt (flag off: no-op)
                 else if (acrossSea && karamja(p.getLocation()) && homeTeleport(p)) { last = "home teleport (no fare)"; return !halted; } // batch 16 item7: broke on Karamja, the free home teleport like a 2009 player (a bot stuck there failed every mainland job, 104 times in a morning)
                 else if (acrossSea) { tollNote(p, "boat-karamja", BOAT_FARE); finish("Can't afford the trip across the sea."); return !halted; } // no walking into the sea // batch 19c (design 4.7)
+                else if (strandedWhy != null && Preflight.strandHome(p, strandedWhy)) { last = "home teleport (stranded, no fare)"; return !halted; } // P81
                 else if (strandedWhy != null) { finish("Can't get out: " + strandedWhy + ", and no coins for a teleport."); return !halted; } // batch 21
                 else if (leavingMory) { tollNote(p, "salve", Preflight.fare()); finish("Can't afford the trip west out of Morytania."); return !halted; } // batch 20 A2: no walking to the Salve from the east either
                 else if (acrossSalve) { tollNote(p, "salve", BOAT_FARE); finish("Can't afford the trip east."); return !halted; } // no walking to the Salve (audit 10-22 09:50) // batch 19c [Fable]: need = the boat fare figure (payTeleport's own charge is runes)
@@ -3436,7 +4097,7 @@ public final class AfkTasks implements StartupListener {
         static boolean karamjaBox(Location l) {
             if (l == null || l.getZ() != 0 || l.getY() >= 6400) return false;
             int x = l.getX(), y = l.getY();
-            return y >= 2880 && (x >= 2740 && x < 2815 && y <= 3235 || x >= 2815 && x < 2880 && y <= 3205 || x >= 2815 && x <= 3000 && y <= 3185); // batch 17 item3: the north coast east of Brimhaven (2815-2879, up to 3205; Crandor starts past 3215) was "not Karamja": a shop walk there turned back for a second crossing
+            return y >= 2880 && (P84.karamjaWest(x, y) || x >= 2740 && x < 2815 && y <= 3235 || x >= 2815 && x < 2880 && y <= 3205 || x >= 2815 && x <= 3000 && y <= 3185); // batch 17 item3: the north coast east of Brimhaven (2815-2879, up to 3205; Crandor starts past 3215) was "not Karamja": a shop walk there turned back for a second crossing
         }
 
         /** Both on the surface, one on Karamja and the other not: no walking there (batch 14). */
@@ -3509,7 +4170,7 @@ public final class AfkTasks implements StartupListener {
             if (!b.landed && boatLanded(b)) {
                 b.landed = true;
                 long spent = b.coinsAtBoard - Ledger.Wallet.coins(p);
-                if (spent > 0) Ledger.PAID += spent; // the fare leaves the game, as the teleport's coins did
+                if (spent > 0) Ledger.addPaid(spent); // the fare leaves the game, as the teleport's coins did
                 if (p.isArtificial()) CoinWatch.paid(p, "boat"); // batch 22-1: boat fares count as paid actions (CoinWatch)
                 System.out.println("[AfkTasks] " + p.getUsername() + " took the boat to " + (b.out ? "Karamja" : "Port Sarim") + " (" + spent + " gp) bound for " + b.fin);
                 last = "crossed by boat";
@@ -3524,7 +4185,7 @@ public final class AfkTasks implements StartupListener {
             if (r == QuestSteps.St.DONE && ++b.idx < b.steps.size()) { b.steps.get(b.idx).begin(b.qr); return true; }
             // across (or a step after the landing failed): off the deck if still on it, and on with the trip
             QuestSteps.clearPopups(p);
-            if (QuestPiratesTreasure.onDeck(p) && !p.getLocks().isMovementLocked()) p.getProperties().setTeleportLocation(Location.create(2956, 3146, 0)); // where the gangplank puts you (PortsObjectPlugin)
+            if (QuestPiratesTreasure.onDeck(p) && !p.getLocks().isMovementLocked()) Bob.tele(p).getProperties().setTeleportLocation(Location.create(2956, 3146, 0)); // where the gangplank puts you (PortsObjectPlugin)
             boat = null;
             goTo(b.st, b.fin);
             return true;
@@ -3554,6 +4215,7 @@ public final class AfkTasks implements StartupListener {
         static boolean essenceMine(Location l) { return l != null && l.getY() >= 4800 && l.getY() <= 4870 && l.getX() >= 2880 && l.getX() <= 2940; }
 
         static Location[] entrance(Location under) {
+            if (MineGuild.ON) { Location[] g = MineGuild.entrance(under); if (g != null) return g; } // W8 (-Dbots.mine.guild): the Mining Guild ladder under Falador
             int x = under.getX(), y = under.getY();
             if (x >= 2800 && x <= 2970 && y >= 9660 && y <= 9900)
                 return new Location[]{Location.create(2965, 3380, 0), Location.create(2884, 3396, 0), Location.create(2884, 9798, 0)};
@@ -3564,20 +4226,62 @@ public final class AfkTasks implements StartupListener {
             return null;
         }
 
+        /**
+         * P56 A1 (root cause 1): the walker only plans on the ground floor, so a player on an upper floor (Lumbridge castle's
+         * bank, z=2) walked in place for ever: smelt_best took the ores and then never left the bank. Climb down by the nearest
+         * stairs or ladder like a player (the object's own Climb-down handler); none within 15 tiles: stop with a message.
+         * True while this tick was spent on it.
+         */
+        int climbs, climbZ = -1;
+        boolean climbDown() {
+            if (busy()) return true;
+            Location c = p.getLocation();
+            Scenery best = null; double bd = 16;
+            for (int dx = -15; dx <= 15; dx++) for (int dy = -15; dy <= 15; dy++) {
+                Scenery sc = RegionManager.getObject(c.getZ(), c.getX() + dx, c.getY() + dy);
+                if (sc == null || sc.getName() == null || !hasOption(sc, "Climb-down")) continue;
+                String nm = sc.getName().toLowerCase(Locale.ROOT);
+                if (!nm.contains("stair") && !nm.contains("ladder")) continue;
+                double di = sc.getLocation().getDistance(c);
+                if (di < bd) { bd = di; best = sc; }
+            }
+            if (c.getZ() != climbZ) { climbZ = c.getZ(); climbs = 0; } // a new floor: a fresh count
+            if (best == null || ++climbs > 12) { finish("Can't find the way down from this floor. Go downstairs, then press Start again."); return true; }
+            last = "climbing down the " + best.getName().toLowerCase(Locale.ROOT);
+            interact(best, "Climb-down", IntType.SCENERY);
+            progTick = GameWorld.getTicks(); sinceProgress = 0; this.best = Double.MAX_VALUE;
+            wait = 2;
+            return true;
+        }
+
         void walk(State next) {
             if (boat != null && boatTick()) return; // batch 16 item6
             if (REACH_MYRE && Gates.swampGatePass(p)) { last = "through the Mort Myre gate"; return; } // P39 R1: the warning the gate opened for a bot that has started Nature Spirit
+            if (!p.isArtificial() && dest != null && p.getLocation().getZ() > 0 && dest.getZ() == 0 && dest.getY() < 6400 && climbDown()) return; // P56 A1: a player upstairs (Lumbridge's bank) walks down the stairs first
             double dist = p.getLocation().getDistance(dest);
             if (dist <= 2 && underDest != null) { // at the ladder or trapdoor: climb down like a player, then on to the spot
                 Location[] ent = entrance(underDest);
                 Watchdog.fdrv(p, Failures.DRV_CLIMBER); // batch 19a design 3.1: the entrance climb
                 try { p.getAnimator().animate(new core.game.world.update.flag.context.Animation(827)); } catch (Throwable ignored) { }
-                p.getProperties().setTeleportLocation(ent != null ? ent[2] : underDest);
+                Bob.tele(p).getProperties().setTeleportLocation(ent != null ? ent[2] : underDest);
+                if (P89.ON) { try { NavWalker.forget(p); P89.count("arrive-forget", P89.ARRIVE); } catch (Throwable ignored) { } } // P89: arrived; the next walk to this goal plans afresh
                 dest = underDest; underDest = null; best = Double.MAX_VALUE; sinceProgress = 0; retries = 0; last = "climbed down";
                 System.out.println("[AfkTasks] " + p.getUsername() + " walked to the dungeon entrance at " + p.getLocation() + " and climbed down");
                 return;
             }
+            if (dist <= 2 && upDest != null) { // P90 fix 2: at the entrance's foot: climb up like a player, then on to the surface goal
+                Location[] e = entrance(p.getLocation());
+                try { p.getAnimator().animate(new core.game.world.update.flag.context.Animation(828)); } catch (Throwable ignored) { }
+                Location top = e != null ? e[1] : upDest, go = upDest;
+                Bob.tele(p).getProperties().setTeleportLocation(top);
+                upDest = null;
+                System.out.println("[AfkTasks] " + p.getUsername() + " climbed out of the dungeon at " + top + " (P90)");
+                if (Exit1.ON) Exit1.left(p, "the dungeon"); // exit1: the P90 ladder climb is the free exit for ladder dungeons
+                goTo(state, go);
+                return;
+            }
             if (dist <= 2) {
+                if (P89.ON) { try { NavWalker.forget(p); } catch (Throwable ignored) { } } // P89: arrived (walk() returns before NavWalker's own arrival check)
                 state = next;
                 return;
             }
@@ -3593,7 +4297,7 @@ public final class AfkTasks implements StartupListener {
             shortcutSince = 0;
             boolean onRoute = RouteMap.PLANS.containsKey(p.getUsername().toLowerCase());
             if (onRoute && routeLast != null && now.getDistance(routeLast) >= 1) { sinceProgress = 0; routeLast = now; if (dist < best - 0.5) progTick = GameWorld.getTicks(); best = Math.min(best, dist); } // P17 item 1: route movement alone is not progress for the player stuck rule (a circling walk reset it for ever)
-            else if (dist < best - 0.5) { best = dist; sinceProgress = 0; routeLast = now; progTick = GameWorld.getTicks(); }
+            else if (dist < best - 0.5) { best = dist; sinceProgress = 0; routeLast = now; progTick = GameWorld.getTicks(); if (!p.isArtificial()) walkFinds = 0; } // P61: the search cap counts searches since the last real gain
             else if (next != State.RECOVER && !p.isArtificial() && travels() && GameWorld.getTicks() - progTick > PLAYER_STUCK_TICKS) { // P16 item 2c: players say stuck within ~200 ticks (was two stages of ~410)
                 progTick = GameWorld.getTicks(); playerStuck("no progress"); return;
             }
@@ -3608,10 +4312,11 @@ public final class AfkTasks implements StartupListener {
                     if (next == State.RECOVER) { state = State.RECOVER; return; } // rest where we are
                     if (!p.isArtificial() && travels()) { playerStuck("no progress"); return; } // batch 23 T2: a player gets one re-plan, then a message; never a teleport
                     long c0 = Ledger.Wallet.coins(p);
-                    if (p.isArtificial() && stallTeles < STALL_TELES_MAX && Ledger.Wallet.payTeleport(p)) { // bots take the teleport a player would (paid, audit #16), instead of giving up // batch 22 B21-8: at most STALL_TELES_MAX per goTo
+                    if (p.isArtificial() && stallTeles < STALL_TELES_MAX && Slayer.stallOk(p) && Ledger.Wallet.payTeleport(p)) { // bots take the teleport a player would (paid, audit #16), instead of giving up // batch 22 B21-8: at most STALL_TELES_MAX per goTo
                         stallTeles++;
                         Location land = Watchdog.landing(dest);
                         System.out.println("[AfkTasks] " + p.getUsername() + " stuck at " + p.getLocation() + ", paid stall teleport " + stallTeles + "/" + STALL_TELES_MAX + " (" + (c0 - Ledger.Wallet.coins(p)) + " gp) to " + land + " for " + dest); // batch 22 B21-8: was afk.debug only, with no fare
+                        if (Slayer.ON) Slayer.stalled(p, p.getLocation()); // P65 slayer v1.3: a task-trip spot that stalls goes off the trip list (flag off: never called)
                         Spectacle.teleport(p, land); p.getPulseManager().clear(); // batch 15 item1
                         best = Double.MAX_VALUE; retries = 0; sinceProgress = 0; last = "teleported";
                         return;
@@ -3679,10 +4384,10 @@ public final class AfkTasks implements StartupListener {
          * giving up. True (give up) only when the planner is off or finds no toll-free route from here.
          */
         static boolean tollStuck(Player p, Location dest) {
-            if (!NavWalker.ON || !NavPlanner.built || p == null || dest == null) return true;
+            if (!plannerFor(p) || p == null || dest == null) return true; // P58: plannerFor (bots: nav.on && built, as before)
             TOLL_CALLS.incrementAndGet();
             final Location here = p.getLocation();
-            final int agility = NavWalker.agility(p), band = Heat.band(p);
+            final int agility = NavWalker.agility(p), band = p.isArtificial() ? Heat.band(p) : Heat.bandAny(p); // P58: players by their combat band too
             final boolean memo = TOLL_CACHE && here != null; final int g = NavPlanner.gen;
             final long mk = memo ? tollKey(here, dest, band, agility) : 0L;
             final String who = memo ? key(p) : null;
@@ -3724,7 +4429,18 @@ public final class AfkTasks implements StartupListener {
 
         /** review fix 2: under 10 gp with the planner on, the Al Kharid exit rule (to the gate) is skipped: the planner walks round the fence. */
         static boolean cantPayToll(Player who) {
-            return who != null && NavPlanner.TOLL_ON && NavWalker.ON && NavPlanner.built && gateCoins(who) < 10; // batch 23 T2: gateCoins = Ledger.Wallet.coins for bots
+            return who != null && NavPlanner.TOLL_ON && plannerFor(who) && gateCoins(who) < 10; // batch 23 T2: gateCoins = Ledger.Wallet.coins for bots // P58: plannerFor
+        }
+
+        /**
+         * P58: the route planner walks this walker. Bots: nav.on (unchanged). Players (in travel mode, see step()): whenever the
+         * graph is built, nav.on or not; the learned route they fell back to with nav.on off took Varrock -> Edgeville furnace
+         * walks into the house door pocket at 3139-3143,3495-3511 (the offline nav port: no way west from there; the real way is
+         * round by Barbarian Village). -Dafk.playerPlanner=false: players follow nav.on again.
+         */
+        static final boolean PLAYER_PLANNER = !"false".equalsIgnoreCase(System.getProperty("afk.playerPlanner", "true"));
+        static boolean plannerFor(Player who) {
+            return NavPlanner.built && (NavWalker.ON || (PLAYER_PLANNER && who != null && !who.isArtificial()));
         }
 
         /** batch 21 B2: at the Shantay Pass with the destination across it: through (passHop). */
@@ -3750,7 +4466,7 @@ public final class AfkTasks implements StartupListener {
             boolean eastward = dest.getX() >= 3268 && here.getX() <= 3267, westward = dest.getX() <= 3267 && here.getX() >= 3268; // batch 21 B2: x 3268 is the east side (the fence is its west edge): a bot standing there bound east paid and hopped again, and a goal at x 3268 had no side
             if (!eastward && !westward) return 0;
             if (!payGate(p, 10, "toll", "alkharid-toll")) { tollNote(p, "alkharid", 10); return -1; } // batch 19c (design 4.7): logged only // batch 23 T2: payGate = Ledger.Wallet.pay for bots, the pack for a player
-            p.getProperties().setTeleportLocation(Location.create(eastward ? 3270 : 3266, 3227, 0)); // the 10 gp are gone from the game, as at the real gate
+            Bob.tele(p).getProperties().setTeleportLocation(Location.create(eastward ? 3270 : 3266, 3227, 0)); // the 10 gp are gone from the game, as at the real gate
             try { NavWalker.forget(p); } catch (Throwable ignored) { } // batch 21 B2: plan again from the far side (the old route's door hop at the gate sent the bot back to x 3268, where it paid and hopped east again, round and round)
             if (!p.isArtificial()) p.sendMessage("You pay 10 coins and pass through the toll gate."); // batch 23 T2: a player is never made to speak
             else if (RNG.nextInt(3) == 0) BotChat.say(p, BotChat.pick("Ten coins. Daylight robbery.", "There's your toll.", "Ten gp to walk through a gate. Honestly."));
@@ -3803,9 +4519,11 @@ public final class AfkTasks implements StartupListener {
             Location via = passVia(here, dest);
             if (via == null || here.getDistance(via) > 3) return 0;
             boolean south = via == PASS_N;
-            if (south && !paid && !payGate(p, PASS_FARE, "pass", "shantay-pass")) { tollNote(p, "shantay", PASS_FARE); return -1; } // batch 23 T2: payGate (bots unchanged)
-            p.getProperties().setTeleportLocation(south ? PASS_S : PASS_N);
+            final long c0 = Seed.ON ? Ledger.Wallet.coins(p) : 0; // W8 fix9b scenario (seed flags on only)
+            if (south && !paid && !payGate(p, PASS_FARE, "pass", "shantay-pass")) { tollNote(p, "shantay", PASS_FARE); Scen.passCantPay(p); return -1; } // batch 23 T2: payGate (bots unchanged)
+            Bob.tele(p).getProperties().setTeleportLocation(south ? PASS_S : PASS_N);
             try { NavWalker.forget(p); } catch (Throwable ignored) { } // plan again from the far side
+            if (Seed.ON) Scen.pass(p, south, south && !paid, c0 - Ledger.Wallet.coins(p)); // W8 fix9b scenario
             return 1;
         }
 
@@ -3825,6 +4543,20 @@ public final class AfkTasks implements StartupListener {
         static Location bridgeVia(Location from, Location to) { return bridgeVia(null, from, to); }
         static Location bridgeVia(Player who, Location from, Location to) { return bridgeVia(who, from, to, null); } // shop walks, scenarios, quests: no per-trip memory (old behaviour)
         /** done: the Runner's per-trip memory of reached vias (b26 loops fix 2: AVOID vias while AVOID2; P32: Lumbridge vias while BRIDGE_FIX), else null. */
+        /** P58: the AVOID boxes (the Draynor jail guards) as their own rule, so a player's planner walk can take it first. Null: no box in the way. */
+        static Location avoidLeg(Player who, Location from, Location to, java.util.Set<Location> done) {
+            if (who == null || from == null || to == null) return null;
+            int cb = 99; try { cb = who.getProperties().getCurrentCombatLevel(); } catch (Throwable ignored) { }
+            for (int[] a : AVOID) {
+                if (cb >= a[6]) continue;
+                if (AVOID2 && done != null && a.length > 8) { // b26 loops fix 2: via 1 reached this trip -> via 2; via 2 reached -> this box is done (no more ping-pong back to via 1)
+                    if (done.contains(Location.create(a[7], a[8], 0))) continue;
+                    if (done.contains(Location.create(a[4], a[5], 0))) { if (crosses(from, to, a[0], a[1], a[2], a[3]) && from.getDistance(Location.create(a[7], a[8], 0)) > 3) return Location.create(a[7], a[8], 0); continue; }
+                }
+                if (crosses(from, to, a[0], a[1], a[2], a[3]) && from.getDistance(Location.create(a[4], a[5], 0)) > 3) return Location.create(a[4], a[5], 0);
+            }
+            return null;
+        }
         static Location bridgeVia(Player who, Location from, Location to, java.util.Set<Location> done) {
             if (from == null || to == null || from.getZ() != 0 || to.getZ() != 0) return null;
             for (int[] b : EXITS) {
@@ -3850,17 +4582,7 @@ public final class AfkTasks implements StartupListener {
                 if (b[0] == 3268 && b[1] == 3140 && to.getX() >= 3268 && to.getY() < 3140) continue; // batch 21 B2: south of Al Kharid (the Shantay Pass, the desert) is walked, not reached through the toll gate (bots bound for 3268,3052 stood at the gate, where tollHop has no side for x 3268)
                 if (in && out && from.getDistance(Location.create(b[4], b[5], 0)) > 3) return Location.create(b[4], b[5], 0);
             }
-            if (who != null) {
-                int cb = 99; try { cb = who.getProperties().getCurrentCombatLevel(); } catch (Throwable ignored) { }
-                for (int[] a : AVOID) {
-                    if (cb >= a[6]) continue;
-                    if (AVOID2 && done != null && a.length > 8) { // b26 loops fix 2: via 1 reached this trip -> via 2; via 2 reached -> this box is done (no more ping-pong back to via 1)
-                        if (done.contains(Location.create(a[7], a[8], 0))) continue;
-                        if (done.contains(Location.create(a[4], a[5], 0))) { if (crosses(from, to, a[0], a[1], a[2], a[3]) && from.getDistance(Location.create(a[7], a[8], 0)) > 3) return Location.create(a[7], a[8], 0); continue; }
-                    }
-                    if (crosses(from, to, a[0], a[1], a[2], a[3]) && from.getDistance(Location.create(a[4], a[5], 0)) > 3) return Location.create(a[4], a[5], 0);
-                }
-            }
+            Location av = avoidLeg(who, from, to, done); if (av != null) return av; // P58: the AVOID loop moved to avoidLeg (unchanged)
             if (who != null && !who.isArtificial()) { // P17 (players; bots keep their old rules): the Al Kharid fence (x 3267, y 3140-3330) seen from outside
                 Location target = riverVia(from, to); if (target == null) target = to;
                 // P17 item 2 (G1/K1): north of the fence's end and bound west of it, a straight line that meets the fence ran down its
@@ -3930,7 +4652,7 @@ public final class AfkTasks implements StartupListener {
             Location h = p.getLocation();
             if (h.getZ() != 0) return null;
             int x = h.getX(), y = h.getY();
-            if (x >= 2938 && x <= 2975 && y >= 3330 && y <= 3395) return Location.create(2964, 3398, 0); // inside Falador: out of the north gate
+            if (P82.fallInside(x, y, P82.ON)) { if (x == 2937) P82.count("falador-wallside", P82.FALADOR); return Location.create(2964, 3398, 0); } // inside Falador: out of the north gate (P82 fix 2: from x 2937, the wall-side column, under -Dnav.p82Fix)
             if (x >= 2937 && x <= 2975 && y >= 3396 && y <= 3455 && h.getDistance(Location.create(2937, 3450, 0)) > 3) return Location.create(2937, 3450, 0); // north of it: up the road to the Taverley gate
             if (x >= 2934 && x <= 2941 && y >= 3445 && y <= 3455) { // at the gate: open it like a player, then through into Taverley
                 Scenery gate = null; double gd = 5;
@@ -3945,16 +4667,58 @@ public final class AfkTasks implements StartupListener {
             return null;
         }
 
+        /**
+         * P82 fix 3 (-Dnav.p82Fix): the Taverley dungeon walk to a goal behind the dusty-key gate (2623 at 2924,9803; the blue
+         * dragons and the black demons lie west of it). The underground walk has no planner, and Pathfinder treats the shut gate
+         * as a wall, so the straight walk stood on the y 9818 ledge north of the dragons (live 2896,9821 / 2901,9818 /
+         * 2927,9819 / 2937,9822). With the key in the pack (keyToPack): walk to the gate, open it like a player, then on.
+         */
+        Location keyGateVia() {
+            if (dest == null || !P82.behindKeyGate(dest.getX(), dest.getY(), dest.getZ()) || dest.getX() > 2923) { keyWp = -1; keyLead = false; keyThrough = false; return null; }
+            Location h = p.getLocation();
+            if (h.getZ() != 0 || h.getY() < 9740 || h.getY() > 9860 || h.getX() < 2880 || h.getX() > 2960) { keyWp = -1; keyLead = false; keyThrough = false; return null; }
+            if (P82.insideKeyGate(h.getX(), h.getY())) { if (P84.ON && !keyThrough) { keyThrough = true; P84.count("taverley-through-gate", P84.THROUGH, p.getUsername() + " at " + h.getX() + "," + h.getY()); } keyWp = -1; keyLead = false; return null; }
+            if (P84.ON && keyThrough) return null; // P84 fix 1: through the gate already; the black demons' way leaves the insideKeyGate box, never back to the gate // not in this part of the dungeon, or through already
+            if (!p.getInventory().containsItem(new Item(1590))) return null;
+            if (P84.ON && !keyLead && keyWp < 0 && P84.ladderFoot(h.getX(), h.getY())) { keyLead = true; keyWp = 0; P84.count("taverley-ladder-way", P84.LEAD, p.getUsername() + " at " + h.getX() + "," + h.getY() + " for " + dest.getX() + "," + dest.getY()); } // P84 fix 1: from the ladder foot, round by y 9848 to the key way
+            int[][] w = keyLead ? P84.LADDER_WAY : P82.KEY_WAY;
+            if (keyWp < 0 || keyWp >= w.length) { keyWp = P82.nearestWay(h.getX(), h.getY()); if (keyWp < 0) return null; } // joins the way at its nearest point (the y 9818 ledge is on it)
+            while (keyWp < w.length - 1 && h.getDistance(Location.create(w[keyWp][0], w[keyWp][1], 0)) <= 3) keyWp++;
+            if (keyWp < w.length - 1 || h.getDistance(P82.KEY_GATE) > 3) return Location.create(w[keyWp][0], w[keyWp][1], 0);
+            Scenery g = RegionManager.getObject(0, P82.KEY_GATE.getX(), P82.KEY_GATE.getY());
+            if (g == null || !hasOption(g, "Open")) return null; // no shut gate to open here: the normal walk
+            if (!p.getPulseManager().hasPulseRunning()) { last = "opening the dragons' gate"; P82.count("dragon-gate-open", P82.GATE); interact(g, "Open", IntType.SCENERY); }
+            return h;
+        }
+        int keyWp = -1; // P82 fix 3: the next point of P82.KEY_WAY on this goTo
+        boolean keyLead, keyThrough; // P84 fix 1: on P84.LADDER_WAY (from the ladder foot); been through the key gate on this trip
+
         void step(double dist) {
+            if (P82.ON && p.getLocation().getY() > 6400) P82.keyToPack(p, dest); // P82 fix 3: the Taverley dungeon key gate opens only with the dusty key in the pack
             if (tollGate()) return; // at the Al Kharid gate: pay and hop first, whichever planner chose the way
             if (passGate()) return; // batch 21 B2: at the Shantay Pass, crossing: through
             Location pv = travels() ? passVia(p.getLocation(), dest) : null; // batch 23 T2: travels() (bots, and players in travel mode)
             if (pv != null) { Location real = dest; dest = pv; try { step(Math.max(1, p.getLocation().getDistance(pv))); } finally { dest = real; } return; } // batch 21 B2: to the pass first (same side, so no deeper)
-            if (NavWalker.ON && travels()) { // the real planner first (the design notes); the old rules below stay as the fallback until it measures better
-                Location nav = NavWalker.step(p, dest, p.isArtificial() || gateCoins(p) >= 10); // batch 21 A: this walker pays the toll (tollGate above) // batch 23 T2: a player only with 10 coins in the pack
+            if (!p.isArtificial() && plannerFor(p) && travels()) { // P58 (players): the planner ignores the AVOID boxes (Draynor jail guards, level 26 aggressive): a level-3 player bound Draynor bank -> Lumbridge furnace was attacked at 3120,3253 and stuck in RETREAT/RECOVER; round the box by its vias first, the planner walking each leg
+                if (AVOID2 && viaSent != null && p.getLocation().getDistance(viaSent) <= 3) viaDone.add(viaSent);
+                Location av = avoidLeg(p, p.getLocation(), dest, AVOID2 ? viaDone : null);
+                if (av != null && p.getLocation().getDistance(av) > 3 && viaGood(av)) {
+                    viaSent = av; Location real = dest;
+                    try {
+                        Location nav = NavWalker.step(p, av, gateCoins(p) >= 10, true);
+                        dest = nav != null ? nav : av;
+                        stepTo(Math.max(1, p.getLocation().getDistance(dest))); last = "round the guards: " + last;
+                    } finally { dest = real; }
+                    return;
+                }
+            }
+            if (plannerFor(p) && travels()) { // the real planner first (the design notes); the old rules below stay as the fallback until it measures better // P58: players use it even with nav.on off (bots: nav.on, as before)
+                Location nav = NavWalker.step(p, dest, p.isArtificial() || gateCoins(p) >= 10, !p.isArtificial()); // batch 21 A: this walker pays the toll (tollGate above) // batch 23 T2: a player only with 10 coins in the pack
                 if (nav != null) { Location real = dest; dest = nav; try { stepTo(Math.max(1, p.getLocation().getDistance(nav))); last = "nav: " + last; } finally { dest = real; } return; }
             }
             Location via = travels() ? taverleyVia() : null;
+            if (via == null && P82.ON && travels()) via = keyGateVia(); // P82 fix 3: to the blue dragons' key gate and through it
+            if (via == null && W6Herbs.SUPPLY && p.isArtificial() && dest != null) { int[] w6 = W6Herbs.via(true, p.getLocation().getX(), p.getLocation().getY(), p.getLocation().getZ(), dest.getX(), dest.getY()); if (w6 != null) { via = Location.create(w6[0], w6[1], 0); W6Herbs.druidVias++; W6Herbs.say(p.getUsername(), "herbSupply", "via", "walk lead in the Taverley dungeon to " + w6[0] + "," + w6[1], System.currentTimeMillis()); } } // W6 (-Dartisans.herbSupply): ladder foot <-> the Taverley chaos druids by the lead (no planner underground)
             if (via != null && via.equals(p.getLocation())) return; // pathing review 10-23 A-7: the gate click is under way
             if (BRIDGE_FIX && viaAim != null && p.getLocation().getDistance(viaAim) <= 3) { viaDone.add(viaAim); viaAim = null; } // P32: a via this trip aimed at and came within 3 of is reached (bridgeVia never returns a via within 3, so it is recorded here)
             if (AVOID2 && viaSent != null && p.getLocation().getDistance(viaSent) <= 3) viaDone.add(viaSent); // b26 loops fix 2: the AVOID via it was sent to is reached
@@ -3981,6 +4745,10 @@ public final class AfkTasks implements StartupListener {
          * next calls from that tile (for 30 ticks) go straight to the door / shake-loose part instead of repeating them.
          */
         static final int STEP_FINDS = 4;
+        /** P61 (players only): Pathfinder searches stepTo may run in one walk attempt (one goTo); past it, only the door / shake-loose part runs until the next goTo. */
+        static final int WALK_FINDS = Math.max(8, Integer.getInteger("afk.walkFinds", 60));
+        int walkFinds; // P61: searches this goTo (players)
+        boolean findOk() { if (p.isArtificial()) return true; if (walkFinds >= WALK_FINDS) return false; walkFinds++; return true; }
         Location stepFrom, stepFor, stepFailAt, stepFailFor; // runner profiling 10-23
         int stepNext, stepFailTick;
 
@@ -4002,6 +4770,7 @@ public final class AfkTasks implements StartupListener {
             // runner profiling 10-23: where this call starts in the list (0, 1 long legs; 2-10 the fan; 11 the door part)
             int from = c.equals(stepFrom) && dest.equals(stepFor) ? stepNext : 0;
             if (from == 0 && c.equals(stepFailAt) && dest.equals(stepFailFor) && GameWorld.getTicks() - stepFailTick < 30) from = 11;
+            if (!p.isArtificial() && walkFinds >= WALK_FINDS) { from = 11; last = "search cap " + WALK_FINDS + " this walk"; } // P61: players only
             stepFrom = null; stepNext = 0;
             int idx = 0, finds = 0;
             // First try a long leg: the pathfinder routes around fences and rivers when it can see the whole way.
@@ -4013,6 +4782,7 @@ public final class AfkTasks implements StartupListener {
                 tried = l2;
                 if (idx++ < from) continue; // runner profiling 10-23: searched on an earlier call
                 if (finds++ >= STEP_FINDS) { stepLater(c, idx - 1); return; }
+                if (!findOk()) break; // P61: players' per-walk cap
                 Location t = dist <= far ? dest : c.transform((int) Math.round(ux * l2), (int) Math.round(uy * l2), 0);
                 Path path = Pathfinder.find(p, t);
                 if (path == null || !path.isSuccessful() || path.getPoints().isEmpty()) continue;
@@ -4025,6 +4795,7 @@ public final class AfkTasks implements StartupListener {
             for (int a : new int[]{0, 25, -25, 50, -50, 80, -80, 115, -115}) {
                 if (idx++ < from) continue; // runner profiling 10-23
                 if (finds++ >= STEP_FINDS) { stepLater(c, idx - 1); return; }
+                if (!findOk()) break; // P61: players' per-walk cap
                 double r = Math.toRadians(a + (RNG.nextInt(11) - 5));
                 double vx = ux * Math.cos(r) - uy * Math.sin(r), vy = ux * Math.sin(r) + uy * Math.cos(r);
                 Location t = dist <= 18 && a == 0 ? dest : c.transform((int) Math.round(vx * len), (int) Math.round(vy * len), 0);
@@ -4043,6 +4814,7 @@ public final class AfkTasks implements StartupListener {
                 if (sc == null || sc.getName() == null || !hasOption(sc, "Open")) continue;
                 String nm = sc.getName().toLowerCase(Locale.ROOT);
                 if (!nm.contains("gate") && !nm.contains("door")) continue;
+                if (!p.isArtificial() && (nm.contains("trapdoor") || nm.contains("trap door"))) continue; // P56 A1 (root cause 2): "Hidden trapdoor" near Edgeville matched "door"; opening it moved the player, a loop on the Varrock-Edgeville walk (bots unchanged)
                 if (!p.isArtificial() && doorsTried.contains(sc.getLocation())) continue; // P16 item 2b: tried, no way opened
                 double di = sc.getLocation().getDistance(c);
                 if (di < dd) { dd = di; door = sc; }

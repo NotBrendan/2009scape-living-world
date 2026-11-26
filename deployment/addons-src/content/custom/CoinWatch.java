@@ -35,6 +35,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * P38 L7: baseline only at FLEET_PCT of the fleet or after the count held HOLD_SAMPLES samples (-Dcoinwatch.fleet, .fleetPct,
  * .holdSamples, .holdMin); log-only "[CoinWatch] RISE ..." line behind -Dcoinwatch.rise=true (.riseGp, .riseMin), see rise().
  * design: the design notes (not published). Game thread (its own 100-tick pulse); paid() may be called from any thread.
+ * W9 (-Dcoinwatch.bandAware, default off): the hourly drop rule judges the total against the clerk's band instead of the
+ * boot baseline; see bandFloor / hourDrop / bandLine (the design notes).
  */
 public final class CoinWatch implements StartupListener {
     static final boolean ON = !"false".equalsIgnoreCase(System.getProperty("coinwatch", "true"));
@@ -83,6 +85,18 @@ public final class CoinWatch implements StartupListener {
     static long started;
 
     static void log(String s) { System.out.println("[CoinWatch] " + s); }
+    /** econ3 (log only): the "[CoinWatch] poor ..." line, at most once every -Dcoinwatch.poorMin (default 30) minutes, from the status line's own wallet read. */
+    static final long POOR_MS = Math.max(1L, Long.getLong("coinwatch.poorMin", 30L)) * 60_000L;
+    static volatile long lastPoorAt;
+    static boolean poorDue(long now, long last, long every) { return last <= 0 || now - last >= every; }
+    /** Pure. under1000 includes under400, under5000 includes both; median of an even count = mean of the middle two; no bots = richest=-:0 median=0. */
+    static String poorLine(List<Object[]> each) {
+        int a = 0, b = 0, c = 0, i = 0; String rn = "-"; long rg = -1; long[] v = new long[each == null ? 0 : each.size()];
+        if (each != null) for (Object[] o : each) { long g = o[1] == null ? 0 : (Long) o[1]; v[i++] = g; if (g < 400) a++; if (g < 1000) b++; if (g < 5000) c++; if (g > rg) { rg = g; rn = String.valueOf(o[0]); } }
+        java.util.Arrays.sort(v);
+        long med = v.length == 0 ? 0 : (v[(v.length - 1) / 2] + v[v.length / 2]) / 2;
+        return "poor under400=" + a + " under1000=" + b + " under5000=" + c + " richest=" + rn + ":" + Math.max(0, rg) + " median=" + med;
+    }
 
     @Override
     public void startup() {
@@ -99,6 +113,8 @@ public final class CoinWatch implements StartupListener {
         });
         log("on: drop alarm over " + DROP_PCT + "% in " + DROP_HOURS + " falling hours or " + SINGLE_PCT + "% in one, paid alarm over " + MAX_PAID + " per bot and " + MAX_KIND + " per kind an hour (period " + PERIOD_MS / 60_000 + " min, warm-up " + WARM_MS / 60_000 + " min)");
         if (RISE_ON) log("rise rule on (log only): RISE line over " + RISE_GP + " gp in " + RISE_MS / 60_000 + " min");
+        if (BAND_AWARE) log("band-aware drop rule on: ALARM under the clerk band floor (" + bandFloor(Ledger.BAND_FLEET) + " gp at " + Ledger.BAND_FLEET + " bots, scaled to the fleet) or over "
+                + BAND_DROP_PCT + "% down in one hour; the boot-baseline drop rule is off" + (Ledger.CLERK_BAND_BUDGET ? "" : " (clerk.bandBudget is off: the clerk is not steering to this band)"));
     }
 
     /** The batch 22 hook: one call per paid action (Ledger.Wallet.payTeleport). Cheap, any thread, never throws. */
@@ -108,9 +124,67 @@ public final class CoinWatch implements StartupListener {
         if (!ON || p == null) return;
         try { if (p.isArtificial()) { count(p.getUsername()); countKind(kind); } } catch (Throwable ignored) { }
     }
-    static void countKind(String kind) {
+    /**
+     * W1 boot-alarm exemption (-Dcoinwatch.bootSeaExempt, default off; the owner 11-18): for the first BOOT_SEA_MS (30 min) after boot
+     * "sea-crossing" paid actions are left out of the fleet-wide per-kind count (the "one paid action over MAX_KIND an hour" alarm:
+     * the whole fleet logs in where it logged out and crosses at once). After 30 min the count is as before. The per-bot count
+     * (PAID, MAX_PAID; Slayer's teleport cap reads it) and what bots do or pay are unchanged. Pure.
+     */
+    static final boolean BOOT_SEA = Boolean.getBoolean("coinwatch.bootSeaExempt");
+    static final long BOOT_SEA_MS = 30 * 60_000L;
+    static volatile int bootSeaSkipped;
+    static boolean bootSeaExempt(boolean on, String kind, long sinceBootMs) { return on && "sea-crossing".equals(kind) && sinceBootMs >= 0 && sinceBootMs < BOOT_SEA_MS; }
+    static void countKind(String kind) { countKind(kind, BOOT_SEA, System.currentTimeMillis() - Ledger.bootAt); }
+    static void countKind(String kind, boolean bootSea, long sinceBootMs) {
         if (!ON) return;
+        if (bootSeaExempt(bootSea, kind, sinceBootMs)) { if (bootSeaSkipped++ == 0) log("boot exemption: sea-crossing left out of the per-kind paid alarm until " + BOOT_SEA_MS / 60_000L + " min after boot"); return; }
         KINDS.computeIfAbsent(kind == null ? "teleport" : kind, k -> new AtomicInteger()).incrementAndGet();
+    }
+
+    /*
+     * W9 band alarm (-Dcoinwatch.bandAware, default off; live 11-19: ALARM at 13:06 and 14:06 UTC while the fleet sat in the
+     * design band, the drop rule still measuring the fall from a 604k boot total). With the flag the hourly drop rule (dropReason)
+     * is replaced by the band rule: ALARM when the total is under the clerk band floor, or fell more than coinwatch.bandAware.dropPct
+     * (default 15) percent since the last hourly check (bot count within 10%, as dropReason), wherever it sits in the band.
+     * The floor comes from the constants clerk.bandBudget steers by (Ledger.BAND_MID, BAND_TOP, BAND_FLEET): mid - (top - mid),
+     * 250,000 gp at 102 bots, scaled to the bots counted. One "[CoinWatch] band ..." line per hourly check says why.
+     * The paid-action alarms (per bot, per kind, the boot sea-crossing exemption) are unchanged. Flag off: dropReason as before.
+     */
+    static final boolean BAND_AWARE = Boolean.getBoolean("coinwatch.bandAware");
+    static final int BAND_DROP_PCT = Math.max(1, Math.min(100, Integer.getInteger("coinwatch.bandAware.dropPct", 15)));
+    static volatile int bandChecks, bandAlarms; // trials read these
+    /** The band floor for this many bots, from the clerk's own band constants. */
+    static long bandFloor(int bots) { return bandFloor(bots, Ledger.BAND_MID, Ledger.BAND_TOP, Ledger.BAND_FLEET); }
+    /** Pure: the band floor = mid - (top - mid) (never under 0, never over mid), quoted at fleet bots and scaled to bots. */
+    static long bandFloor(int bots, long mid, long top, int fleet) { return Ledger.scaled(Math.max(0L, mid - Math.max(0L, top - mid)), bots, fleet); }
+    static boolean bandUnder(long cur, long floor) { return floor > 0 && cur < floor; }
+    static boolean bandJudged(long prev, long pb, long bots) { return prev > 0 && stable(pb, bots); }
+    static boolean bandFast(long cur, long prev, long pb, long bots, int dropPct) { return bandJudged(prev, pb, bots) && (prev - cur) * 100L > (long) dropPct * prev; }
+    /** Pure: the band rule's ALARM reason (both parts when both hold), or null. Each part starts "bot coins fell" (Bargain's drop trip). */
+    static String bandReason(long cur, long prev, long pb, long bots, long floor, int dropPct) {
+        boolean under = bandUnder(cur, floor), fast = bandFast(cur, prev, pb, bots, dropPct);
+        if (!under && !fast) return null;
+        String u = under ? "bot coins fell under the band floor (" + cur + " gp < floor " + floor + " gp, " + pct(floor, cur) + ")" : null;
+        String f = fast ? "bot coins fell " + pct(prev, cur) + " in an hour (" + prev + " -> " + cur + " gp; over " + dropPct + "%, band rule)" : null;
+        return u != null && f != null ? u + "; " + f : u != null ? u : f;
+    }
+    /** Pure: the verdict part of the band line. */
+    static String bandVerdict(long cur, long prev, long pb, long bots, long floor, int dropPct) {
+        boolean under = bandUnder(cur, floor), fast = bandFast(cur, prev, pb, bots, dropPct);
+        if (under || fast) return "ALARM (" + (under ? "under the floor" : "") + (under && fast ? "; " : "") + (fast ? "fell over " + dropPct + "% in an hour" : "") + ")";
+        return "ok (at or over the floor" + (bandJudged(prev, pb, bots) ? ", hour within -" + dropPct + "%"
+                : prev > 0 ? "; hour not judged, bot count changed " + pb + " -> " + bots : "; hour not judged, no earlier reading") + ")";
+    }
+    /** Pure: the one "[CoinWatch] band ..." line per hourly check (without the prefix). */
+    static String bandLine(long cur, long prev, long pb, long bots, long floor, long mid, int dropPct) {
+        return "band total " + cur + " gp, floor " + floor + " gp (" + pct(floor, cur) + "), mid " + mid + " gp, " + bots + " bots; hour "
+                + (prev > 0 ? pct(prev, cur) + " (" + prev + " -> " + cur + " gp)" : "n/a") + ", limit -" + dropPct + "%; verdict " + bandVerdict(cur, prev, pb, bots, floor, dropPct);
+    }
+    /** Pure: the hourly drop decision. band false = dropReason exactly as before; band true = bandReason (tot/bots last = now). */
+    static String hourDrop(boolean band, long[] tot, long[] bots, long prev, long pb, long floor, int bandDropPct) {
+        if (!band) return dropReason(tot, bots, DROP_PCT, DROP_HOURS, SINGLE_PCT);
+        int n = tot.length;
+        return n == 0 || bots.length != n ? null : bandReason(tot[n - 1], prev, pb, bots[n - 1], floor, bandDropPct);
     }
 
     /**
@@ -139,23 +213,58 @@ public final class CoinWatch implements StartupListener {
     }
 
     /** {total gp, bots}: online adventurers' wallets + offline profiles + coins owed to logged-out bots. Game thread. */
-    static long[] total() {
+    static long[] total() { return total(null); }
+    /** econ3: the same read; each (when not null) gets one {name, Long coins} row per counted bot, for the poor line. */
+    static long[] total(List<Object[]> each) { return total(each, Ledger.BOOT_FAIR); }
+    /** boot1: profiles in the book that are neither on line nor in OFFLINE: not spawned yet this boot, waiting in RETRY, or being restored (the lists saveProfiles writes). */
+    static List<SmartAdventurers.Profile> waiting() {
+        List<SmartAdventurers.Profile> w = new ArrayList<>();
+        try {
+            for (int i = Math.max(0, SmartAdventurers.spawned); i < SmartAdventurers.SAVED.size(); i++) w.add(SmartAdventurers.SAVED.get(i));
+            for (int i = Math.max(0, SmartAdventurers.spawnedHigh); i < SmartAdventurers.SAVED_HIGH.size(); i++) w.add(SmartAdventurers.SAVED_HIGH.get(i));
+            for (SmartAdventurers.Retry r : SmartAdventurers.RETRY) w.add(r.p);
+            SmartAdventurers.Profile rp = SmartAdventurers.restoringProf; if (rp != null) w.add(rp);
+        } catch (Throwable ignored) { }
+        return w;
+    }
+    /** boot1: {bots in (on line or on a break), roster (those + the profiles still waiting to spawn)}, for Ledger.fairHold. */
+    static int[] fleetIn() { return new int[]{(int) total(null, false)[1], (int) total(null, true)[1]}; }
+    /** boot1: all = also count the waiting profiles from their saved coins (-Dclerk.bootFair), so a total read during the boot spawn is the whole fleet; all = false is the read as it was. */
+    static long[] total(List<Object[]> each, boolean all) {
         long sum = 0; int n = 0; Set<String> seen = new HashSet<>();
         for (Map.Entry<String, SmartAdventurers.Brain> e : SmartAdventurers.BRAINS.entrySet()) {
             SmartAdventurers.Brain br = e.getValue();
             if (br == null || br.bot == null || !br.bot.isActive()) continue;
-            sum += Ledger.Wallet.coins(br.bot); n++; seen.add(e.getKey().toLowerCase(Locale.ROOT));
+            long c = Ledger.Wallet.coins(br.bot); sum += c; n++; if (each != null) each.add(new Object[]{br.bot.getUsername(), Long.valueOf(c)}); seen.add(e.getKey().toLowerCase(Locale.ROOT));
         }
         for (SmartAdventurers.Profile pr : SmartAdventurers.OFFLINE) {
             if (pr == null || pr.name != null && seen.contains(pr.name.toLowerCase(Locale.ROOT))) continue;
-            sum += pr.coins; n++;
+            sum += pr.coins; n++; if (each != null) each.add(new Object[]{pr.name, Long.valueOf(pr.coins)});
+        }
+        if (all) {
+            for (SmartAdventurers.Profile pr : SmartAdventurers.OFFLINE) if (pr != null && pr.name != null) seen.add(pr.name.toLowerCase(Locale.ROOT));
+            for (SmartAdventurers.Profile pr : waiting()) {
+                if (pr == null || pr.name != null && !seen.add(pr.name.toLowerCase(Locale.ROOT))) continue;
+                sum += pr.coins; n++; if (each != null) each.add(new Object[]{pr.name, Long.valueOf(pr.coins)});
+            }
         }
         for (Long v : Ledger.Wallet.OFFLINE.values()) if (v != null) sum += v;
         return new long[]{sum + testExtra, n};
     }
 
-    /** The configured fleet the baseline waits for (-Dcoinwatch.fleet, default smartbots.count). Game thread. */
-    static int fleet() { return Integer.getInteger("coinwatch.fleet", SmartAdventurers.COUNT); }
+    /**
+     * Train-3 audit finding 1 (the design notes): off by default. With -Dcoinwatch.fleetHigh=true the fleet the baseline
+     * waits for counts the high tier too, as SmartAdventurers.startup spawns it: max(smartbots.high, remembered high-tier profiles)
+     * (P41: live 90 + 12 = 102, so the 90% rule locks at 92 of 102 bots, not at 81 as the
+     * 11-06 log showed: "start rule: fleet 81 of 90 (90%)"). Off: the fleet is smartbots.count alone, as before.
+     */
+    static final boolean FLEET_HIGH = Boolean.getBoolean("coinwatch.fleetHigh");
+    /** The configured fleet the baseline waits for (-Dcoinwatch.fleet, default smartbots.count, plus smartbots.high with -Dcoinwatch.fleetHigh=true). Game thread. */
+    static int fleet() { return Integer.getInteger("coinwatch.fleet", fleetDefault(FLEET_HIGH, SmartAdventurers.COUNT, highPlanned(SmartAdventurers.HIGH, SmartAdventurers.SAVED_HIGH.size()))); }
+    /** P41 (TestP38CoinWatch H3): the high-tier bots startup plans, max(smartbots.high, remembered high-tier profiles), as its spawn loop does (live 12, so 90 + 12 = 102). Pure. */
+    static int highPlanned(int high, int savedHigh) { return Math.max(high, savedHigh); }
+    /** Pure (TestP38CoinWatch H): the default fleet, count alone (flag off) or count + the high tier (flag on). */
+    static int fleetDefault(boolean high, int count, int highCount) { return high ? Math.max(0, count) + Math.max(0, highCount) : count; }
 
     /**
      * P38 L7 (a), one bot-count reading per call (every minute until the baseline). Returns why the baseline may be taken now,
@@ -193,9 +302,27 @@ public final class CoinWatch implements StartupListener {
         if (why != null) log("RISE " + why);
     }
 
+    /** money-logs: -Dcoinwatch.ref=<gp> (0 = off): log-only comparison of the hourly total with a fixed reference. */
+    static final long REF_GP = Long.getLong("coinwatch.ref", 0L);
+    static double refPct(long ref, long cur) { return ref <= 0 ? 0 : (cur - ref) * 100.0 / ref; }
+    static boolean refDrift(double z) { return z < -30 || z > 60; }
+    /** econ2 M4 (-Dclerk.fix2): DRIFT measured against the band the clerk steers to (Ledger.BAND_MID scaled to the fleet, +-17% = 250-350k at 102 bots), not coinwatch.ref -30/+60%. */
+    static boolean bandDrift(double z) { return z < -17 || z > 17; }
+    static long bandRef(int bots) { return Ledger.scaled(Ledger.BAND_MID, bots, Ledger.BAND_FLEET); }
+    static String bandDriftLine(long cur, long ref) { return String.format(Locale.ROOT, "DRIFT total %d vs band middle %d (%+.1f%%), outside -17%%..+17%%", cur, ref, refPct(ref, cur)); }
+    static String refLine(long cur, long ref) { return String.format(Locale.ROOT, "REF total %d vs ref %d (%+.1f%%)", cur, ref, refPct(ref, cur)); }
+    static String driftLine(long cur, long ref) { return String.format(Locale.ROOT, "DRIFT total %d vs ref %d (%+.1f%%), outside -30%%..+60%%", cur, ref, refPct(ref, cur)); }
     static String pct(long from, long to) { return from <= 0 ? "n/a" : String.format(Locale.ROOT, "%+.1f%%", (to - from) * 100.0 / from); }
 
+    static boolean rosterSaid;
+    /** boot1 (log only, once a boot): the first read with every remembered profile spawned; compare with "boot book" and the last "shutdown total". */
+    static void rosterLine(long now) {
+        if (rosterSaid || SmartAdventurers.spawned <= 0 || !waiting().isEmpty()) return;
+        rosterSaid = true; long[] t = total(null, false); long owed = 0; for (Long v : Ledger.Wallet.OFFLINE.values()) if (v != null) owed += v;
+        log("boot roster in: total " + t[0] + " gp, " + t[1] + " bots (owed " + owed + " gp of it), " + (now - Ledger.bootAt) / 60_000L + " min after boot");
+    }
     static void tick(long now) {
+        try { rosterLine(now); } catch (Throwable ignored) { }
         if (baseline < 0) {
             if (now - started < WARM_MS) return;
             long[] t = total();
@@ -240,7 +367,8 @@ public final class CoinWatch implements StartupListener {
         }
         boolean hourly = now - lastCheckAt >= PERIOD_MS, status = hourly || now - lastLogAt >= LOG_MS;
         if (status) {
-            long[] t = total(); long cur = t[0]; int bots = (int) t[1];
+            boolean poorNow = poorDue(now, lastPoorAt, POOR_MS); List<Object[]> each = poorNow ? new ArrayList<>() : null;
+            long[] t = total(each); long cur = t[0]; int bots = (int) t[1];
             StringBuilder line = new StringBuilder("total ").append(cur).append(" gp, ").append(bots).append(" bots, baseline ").append(baseline).append(" gp (").append(pct(baseline, cur)).append(")");
             if (hourly) {
                 checks++;
@@ -249,25 +377,30 @@ public final class CoinWatch implements StartupListener {
                 HIST.add(new long[]{cur, bots}); while (HIST.size() > DROP_HOURS + 1) HIST.remove(0);
                 long[] ht = new long[HIST.size()], hb = new long[HIST.size()];
                 for (int i = 0; i < ht.length; i++) { ht[i] = HIST.get(i)[0]; hb[i] = HIST.get(i)[1]; }
-                String dropWhy = dropReason(ht, hb, DROP_PCT, DROP_HOURS, SINGLE_PCT);
+                long bandFloor = BAND_AWARE ? bandFloor(bots) : 0; // W9: 0 and unused with the flag off
+                String dropWhy = hourDrop(BAND_AWARE, ht, hb, prev, pb, bandFloor, BAND_DROP_PCT);
                 boolean drop = dropWhy != null;
+                if (BAND_AWARE) { bandChecks++; if (drop) bandAlarms++; log(bandLine(cur, prev, pb, bots, bandFloor, bandRef(bots), BAND_DROP_PCT)); }
                 int paidN = 0; for (AtomicInteger a : PAID.values()) paidN += a.get();
                 line.append("; hour: was ").append(prev).append(" gp (").append(pct(prev, cur)).append(")").append(stable ? "" : " (bot count changed " + pb + " -> " + bots + ")")
                         .append(", paid actions ").append(paidN).append(" by ").append(PAID.size()).append(" bots").append(worstBot != null ? ", top " + worstBot + " " + worst : "").append(kworstName != null ? ", top kind " + kworstName + " " + kworst : "");
                 if (drop) {
                     dropAlarms++;
                     why.add(dropWhy + ", " + bots + " bots");
-                    Watchdog.fev("economy", null, "coinwatch", "coin-drain", "bot coins " + pct(prev, cur) + " in an hour", null,
-                            Watchdog.ctx("kind", "total", "total", cur, "prev", prev, "baseline", baseline, "bots", bots, "botsBefore", pb, "limitPct", DROP_PCT, "singlePct", SINGLE_PCT, "hours", DROP_HOURS, "why", dropWhy, "paidActions", paidN, "worst", worst, "worstBot", worstBot, "bug", 296, "key", "296-total"));
+                    Watchdog.fev("economy", null, "coinwatch", "coin-drain", "bot coins " + pct(prev, cur) + " in an hour", null, BAND_AWARE
+                            ? Watchdog.ctx("kind", "total", "rule", "band", "total", cur, "prev", prev, "floor", bandFloor, "bots", bots, "botsBefore", pb, "bandDropPct", BAND_DROP_PCT, "why", dropWhy, "paidActions", paidN, "worst", worst, "worstBot", worstBot, "bug", 296, "key", "296-total")
+                            : Watchdog.ctx("kind", "total", "total", cur, "prev", prev, "baseline", baseline, "bots", bots, "botsBefore", pb, "limitPct", DROP_PCT, "singlePct", SINGLE_PCT, "hours", DROP_HOURS, "why", dropWhy, "paidActions", paidN, "worst", worst, "worstBot", worstBot, "bug", 296, "key", "296-total"));
                 }
                 Watchdog.clean(BUG_TOTAL, !drop);
                 if (over.isEmpty() && worst <= MAX_PAID) Watchdog.clean(BUG_PAID, true);
                 if (kover.isEmpty() && kworst <= MAX_KIND) Watchdog.clean(BUG_KIND, true);
+                if (REF_GP > 0) { log(refLine(cur, REF_GP)); if (Ledger.CLERK_FIX2) { long br = bandRef((int) bots); if (br > 0 && bandDrift(refPct(br, cur))) log(bandDriftLine(cur, br)); } else if (refDrift(refPct(REF_GP, cur))) log(driftLine(cur, REF_GP)); }
                 prevTotal = cur; prevBots = bots; lastCheckAt = now;
                 PAID.clear(); FLAGGED.clear(); KINDS.clear(); KFLAGGED.clear();
             }
             lastLogAt = now;
             log(line.toString());
+            if (poorNow) { lastPoorAt = now; try { log(poorLine(each)); } catch (Throwable ignored) { } }
             riseSample(now, cur, bots, RISE_ON); // P38 L7 (b): off by default; never an ALARM, never Failures/Bargain
         }
         if (!why.isEmpty()) {

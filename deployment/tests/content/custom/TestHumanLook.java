@@ -28,7 +28,9 @@ import java.util.Set;
  *   emotes: break emotes and face-turns per break-bot-minute;
  *   hubs: bots and real players within 20 tiles of the 10 roadmap section 3 hubs (the step 1b hub table), mean per sample.
  * Unit checks first (U1-U4, judged with bots.humanNames on): pickHumanName over 2000 stock names, a taken name, a "direct" profile
- * restored under exactly its name and saved with "direct":true. Live checks N1 (names) and T1/E1 (breaks) are judged only when
+ * restored under exactly its name and saved with "direct":true. U6/U7 (train-3 audit finding 2, NameGuard; judged both ways, the
+ * expected answer follows -Dbots.nameGuard): a "direct" profile whose name is a real player's save, and a live bot whose name the
+ * server's index now resolves to a "real" player (a TEST_HUMANS stand-in put in Repository.playerNames). Live checks N1 (names) and T1/E1 (breaks) are judged only when
  * their flag is on; with a flag off they print INFO (the control numbers). Prints "[TestHumanLook] sample ...", RESULT ...,
  * summary, DONE. Suggested: -Dsmartbots.count=40 -Dtraders.fast=true (16 new bots on the 24-profile pristine book; 20 s breaks).
  * Add -Dtest.look.breakSoon=true (test only) so every trip ends in a 3-5 min break: with 20 s breaks T1/E1 got no break-bot samples.
@@ -117,6 +119,7 @@ public final class TestHumanLook implements StartupListener {
         String t2 = SmartAdventurers.pickHumanName("Kabal", x -> x.equals("kabal"), new Random(5));
         result("U2", on, t2 != null && !t2.equalsIgnoreCase("Kabal") && endsInDigit(t2) && t2.length() <= 12, "Kabal taken -> " + t2);
         casualUnit(); // U5 (P38 L11), judged whatever the flags are: the pure helpers take the flag as an argument
+        nameGuardUnits(); // U6/U7 (train-3 audit finding 2), judged both ways
         // U3/U4: a "direct" profile is restored under exactly its name and saved with "direct":true
         if (!on) { log("INFO U3/U4: skipped (bots.humanNames=false)"); return; }
         SmartAdventurers.Profile p = new SmartAdventurers.Profile();
@@ -136,6 +139,59 @@ public final class TestHumanLook implements StartupListener {
         Object direct = null; if (arr != null) for (Object o : arr) if (o instanceof JSONObject && DIRECT_TEST.equals(((JSONObject) o).get("name"))) direct = ((JSONObject) o).get("direct");
         JSONObject off = SmartAdventurers.savedJson(p);
         result("U4", on, Boolean.TRUE.equals(direct) && Boolean.TRUE.equals(off.get("direct")), "buildProfiles direct=" + direct + ", savedJson (logged-out form) direct=" + off.get("direct"));
+    }
+
+    // ------------------------------------------------------------------ train-3 audit finding 2 (NameGuard)
+    static final String GUARD_SAVE = "Quietmoss", GUARD_CLASH = "Quietreed";
+    static final int GUARD_MARK = 9; // fletching: a level no test bot has, to find the profile again
+
+    /** A "direct" profile like U3's (coins 500, a bronze sword, combat 20), fletching 77 as the marker. */
+    static SmartAdventurers.Profile directProfile(String name) {
+        SmartAdventurers.Profile p = new SmartAdventurers.Profile();
+        p.name = name; p.direct = true; p.coins = 500; p.home = 0; p.fav = -1;
+        for (int i = 0; i < 24; i++) p.levels[i] = 1;
+        p.levels[0] = p.levels[1] = p.levels[2] = p.levels[3] = 20; p.levels[GUARD_MARK] = 77;
+        p.gear.add(1277);
+        return p;
+    }
+
+    /** U6: a direct profile whose name is a real player's save. U7: a live bot whose name the server's index resolves to a stand-in human. Expected answers follow the flag. */
+    static void nameGuardUnits() {
+        boolean g = NameGuard.ON;
+        // U6: on = restored under another name (blockedRestores +1, nobody online as GUARD_SAVE); off = under that name, as before
+        java.io.File dir = new java.io.File(core.ServerConstants.PLAYER_SAVE_PATH), save = new java.io.File(dir, GUARD_SAVE.toLowerCase(Locale.ROOT) + ".json");
+        boolean made = false;
+        try { dir.mkdirs(); made = save.createNewFile(); } catch (Throwable t) { log("U6 could not make " + save + ": " + t); }
+        boolean isSave = Ledger.isPlayerSave(GUARD_SAVE.toLowerCase(Locale.ROOT));
+        int blocked0 = NameGuard.blockedRestores;
+        SmartAdventurers.Profile p6 = directProfile(GUARD_SAVE);
+        Boolean ok6 = TestB19CUtil.onGame(() -> SmartAdventurers.restoreSafe(p6, SmartAdventurers.LUMBRIDGE, "test", 0));
+        Player as6 = TestB19CUtil.onGame(() -> Ledger.Wallet.findOnline(GUARD_SAVE.toLowerCase(Locale.ROOT)));
+        Player marked6 = null; for (Player b : SmartAdventurers.BOTS) if (b != null && b.isActive() && b.getSkills().getStaticLevel(GUARD_MARK) == 77) marked6 = b;
+        if (made) save.delete();
+        int blocked = NameGuard.blockedRestores - blocked0;
+        boolean pass6 = Boolean.TRUE.equals(ok6) && isSave && marked6 != null && (g ? as6 == null && blocked == 1 && !GUARD_SAVE.equalsIgnoreCase(marked6.getUsername()) : as6 != null && as6 == marked6 && blocked == 0);
+        result("U6", true, pass6, "guard " + g + ": save file " + isSave + ", restoreSafe " + ok6 + ", online as " + GUARD_SAVE + " " + (as6 != null) + " (expect " + !g + "), the profile's bot is " + (marked6 == null ? "missing" : marked6.getUsername()) + ", blocked restores " + blocked + " (expect " + (g ? 1 : 0) + ")");
+        // U7: on = within 12 s the bot is logged out (no Brain under the name), its OFFLINE profile carries a new name, direct, coins 500, the 77 gp owed under the old name moved to the new one; off = it stays, nothing moves
+        String key7 = GUARD_CLASH.toLowerCase(Locale.ROOT);
+        SmartAdventurers.Profile p7 = directProfile(GUARD_CLASH);
+        Boolean ok7 = TestB19CUtil.onGame(() -> SmartAdventurers.restoreSafe(p7, SmartAdventurers.LUMBRIDGE, "test", 0));
+        Player bot7 = TestB19CUtil.onGame(() -> Ledger.Wallet.findOnline(key7));
+        core.game.bots.AIPlayer standIn = TestB19CUtil.onGame(() -> TestCR1.bot(SmartAdventurers.LUMBRIDGE.transform(3, 3, 0), 30, 20, 20, 20));
+        int clashes0 = NameGuard.clashes;
+        TestB19CUtil.game(() -> { Companions.TEST_HUMANS.add(standIn.getUsername().toLowerCase(Locale.ROOT)); Repository.getPlayerNames().put(key7, standIn); Ledger.Wallet.OFFLINE.put(key7, 77L); });
+        try { Thread.sleep(12_000); } catch (InterruptedException ignored) { }
+        Boolean brain7 = TestB19CUtil.onGame(() -> SmartAdventurers.BRAINS.containsKey(key7));
+        SmartAdventurers.Profile off7 = null; for (SmartAdventurers.Profile q : SmartAdventurers.OFFLINE) if (q != null && q.levels[GUARD_MARK] == 77) off7 = q;
+        Long owedOld = Ledger.Wallet.OFFLINE.get(key7), owedNew = off7 == null || off7.name == null ? null : Ledger.Wallet.OFFLINE.get(off7.name.toLowerCase(Locale.ROOT));
+        int clashes = NameGuard.clashes - clashes0;
+        final SmartAdventurers.Profile off7F = off7;
+        TestB19CUtil.game(() -> { Repository.getPlayerNames().remove(key7); Companions.TEST_HUMANS.remove(standIn.getUsername().toLowerCase(Locale.ROOT)); Ledger.Wallet.OFFLINE.remove(key7); if (off7F != null && off7F.name != null) Ledger.Wallet.OFFLINE.remove(off7F.name.toLowerCase(Locale.ROOT)); try { standIn.clear(); } catch (Throwable ignored) { } });
+        boolean pass7 = Boolean.TRUE.equals(ok7) && bot7 != null && (g
+                ? Boolean.FALSE.equals(brain7) && off7 != null && off7.direct && off7.coins == 500 && off7.name != null && !off7.name.equalsIgnoreCase(GUARD_CLASH) && clashes == 1 && owedOld == null && owedNew != null && owedNew == 77L
+                : Boolean.TRUE.equals(brain7) && off7 == null && clashes == 0 && owedOld != null && owedOld == 77L);
+        result("U7", true, pass7, "guard " + g + ": restoreSafe " + ok7 + ", up " + (bot7 != null) + "; after the stand-in took the name: Brain still there " + brain7 + " (expect " + !g + "), offline profile " + (off7 == null ? "none" : off7.name + " direct " + off7.direct + " coins " + off7.coins)
+                + ", clashes " + clashes + " (expect " + (g ? 1 : 0) + "), owed under the old name " + owedOld + ", under the new " + owedNew);
     }
 
     // ------------------------------------------------------------------ live sampling (one sample a minute, game thread)

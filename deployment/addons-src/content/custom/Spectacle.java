@@ -71,6 +71,7 @@ public final class Spectacle {
      * way, so where and when it lands is exactly as before. Ladders, trapdoors, portals and gates keep their own steps.
      */
     static void teleport(Player bot, Location to) {
+        Bob.leave(bot, "teleport"); // P86 hook 1: a fun familiar goes before any bot teleport
         if (bot != null && bot.isArtificial() && to != null && (watcher(bot) != null || watched(to))) {
             try { if (bot.getAnimator().animate(new Animation(8939), new Graphics(1576))) teleShows++; } catch (Throwable ignored) { }
         }
@@ -101,7 +102,7 @@ public final class Spectacle {
     }
 
     static boolean idle(SmartAdventurers.Brain b) {
-        return b != null && b.bot != null && b.bot.isActive() && b.runner == null && b.shopAt == null && !b.delivering && b.mill == 0 && b.graveAt == null && b.agiStep < 0 && b.starUntil == 0 && b.partyUntil <= System.currentTimeMillis(); // batch 16 item3: a party guest is busy
+        return b != null && b.bot != null && b.bot.isActive() && b.runner == null && !b.errand() && b.partyUntil <= System.currentTimeMillis(); // batch 16 item3: a party guest is busy
     }
 
     static long stakeFor(Player a, Player b) {
@@ -123,7 +124,7 @@ public final class Spectacle {
         for (SmartAdventurers.Brain b : SmartAdventurers.BRAINS.values())
             if (b != me && idle(b) && now >= b.nextSpectacle && b.bot.getLocation().getZ() == me.bot.getLocation().getZ() && b.bot.getLocation().getDistance(me.bot.getLocation()) <= 12) { other = b; break; } // P38: partner within 12 (was 8; break loiter radius 5 puts two breakers 8-10 apart)
         if (other == null && Boolean.getBoolean("spectacle.test")) for (SmartAdventurers.Brain b : SmartAdventurers.BRAINS.values()) // trials only: bring a partner over
-            if (b != me && idle(b) && now >= b.nextSpectacle) { b.bot.getProperties().setTeleportLocation(me.bot.getLocation().transform(1, 0, 0)); b.idleUntil = now + 60_000; other = b; break; }
+            if (b != me && idle(b) && now >= b.nextSpectacle) { Bob.tele(b.bot).getProperties().setTeleportLocation(me.bot.getLocation().transform(1, 0, 0)); b.idleUntil = now + 60_000; other = b; break; }
         me.nextSpectacle = now + (Boolean.getBoolean("spectacle.test") ? 60_000 : 15 * 60_000);
         if (other == null) {
             if (crowd != me.bot && crowd.getLocation().getDistance(me.bot.getLocation()) <= 8 && RNG.nextInt(3) == 0) { challengeHuman(me, crowd, now); AREA_BUSY.put(ar, now + 60_000); return true; }

@@ -1,38 +1,60 @@
 # 2009scape Living World Add-ons
 
-Server add-ons for [2009scape](https://2009scape.org) that fill a private world with bots that play
-the way 2009 players did. They gather, craft, trade on the Grand Exchange, haggle in chat, do real
-quests, avoid danger, join crews, take breaks and get themselves unstuck. Bots are plain server
-classes loaded ahead of an unmodified `server.jar`. No outside AI service, nothing to pay for.
+Server add-ons for [2009scape](https://2009scape.org) that fill a private world with about 100 bots that
+play the way 2009 players did. They train every skill from Attack to Summoning, take Slayer tasks from
+four masters, run farm and herb loops, gather, craft, trade on the Grand Exchange, haggle in chat, do real
+quests, avoid danger, join crews, take breaks and get themselves unstuck. Bots are plain server classes
+loaded ahead of an unmodified `server.jar`. No outside AI service, nothing to pay for.
 
-> **Status:** this is a snapshot of the code that ran on my own server in November 2026. I will not
-> be able to keep it updated for a while, so I am putting it out as-is for anyone who wants a
-> little extra life on their world. Pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
-> Not affiliated with or endorsed by Jagex or the 2009scape project.
+> **Status (late November 2026):** this is the code running on my own server as of November 25, 2026
+> (build "train-80"). Updates come when I have time; pull requests are welcome, see
+> [CONTRIBUTING.md](CONTRIBUTING.md). Not affiliated with or endorsed by Jagex or the 2009scape project.
 
-## Why this exists
+## What's new since the November 7 release
 
-I run a small 2009scape server for myself and a couple of friends. The stock bots are fine for
-filling a bank queue, but they stand in the same spots, never talk and never go anywhere, and an
-empty-feeling world gets old fast when there are three of you online. So I started replacing them:
-first bots that walked to real spots and banked, then an economy where what they gathered actually
-ended up on the Exchange, then chat, haggling, quests, crews and a watchdog that rescues the ones
-that get stuck. The goal was never "more bots"; it was that a friend logging in at 2 AM would see
-someone fishing at Catherby, hear someone complain about goblins in Lumbridge, and be able to sell
-a stack of ore to a bot standing at the bank.
+The big change: bots now **train skills the way players do**, not just gather and fight. Every new
+behaviour sits behind its own switch, is off by default, and was tested on throwaway worlds (paired
+runs with the switch on and off, plus scripted scenarios) before it went on the live server.
+[deployment/live-flags.txt](deployment/live-flags.txt) lists the 83 switches that are on there today.
 
-It grew into about 65 classes. Most of the behaviour came from watching what looked wrong and
-fixing that, so it is opinionated and tuned for a low-population server. If that is your
-situation too, it should drop straight in.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/skills-vs-target-dark.svg">
+  <img alt="Bar chart: estimated share of each skill the bots do compared with a real 2009 player, November 25 2026. Highest Mining 64% (target 75%), Hitpoints 62% (75%), Attack 55% (70%), Fishing 51% (70%). Lowest Construction 6% (25%), Hunter 8% (30%), Herblore 18% (45%), Runecrafting 19% (45%). Mean 34.8% against a 54.6% target." src="docs/img/skills-vs-target-light.svg" width="820">
+</picture>
+
+How to read it: for each skill, how much of what a real 2009 player does there the bots actually do
+on the live server, judged from 24 hours of logs (only behaviour seen firing counts). It is an
+estimate, not a measurement. The mean went from 26.7% (November 20) to 34.8% (November 25); the
+orange marks are where I am aiming. The rest of the gap is mostly built and waiting to be switched on.
+
+Highlights, by area (full list in [docs/CHANGELOG.md](docs/CHANGELOG.md)):
+
+* **Combat skills:** stance plans and a Defence share, weapons chosen for the monster, special attack
+  weapons, amulets and armour above rune, a melee fallback for rangers, safe retreats when a fight goes
+  wrong, cheaper food.
+* **Slayer:** Turael and Vannaka, plus Chaeldar and Duradel (in this code; switched on last, so not in
+  live-flags.txt yet), with points, banking first, tasks that fit the
+  bot's purse, and fixes for the bats, ice giants and the Vannaka door.
+* **Summoning:** Wolf Whistle, pouches, healing and combat familiars, and the beast of burden (first
+  used by a live bot on November 25).
+* **Gathering:** Mining and Fishing Guilds, sharks, power mining, tree and herb farm runs, Hunter
+  (birds), Barbarian agility laps, Ardougne pickpocketing, nature and law rune runs.
+* **Artisan skills:** smiths smelt their own bars, fletchers make arrows and their own bows, cooks burn
+  less and cook on fires, plank types for Construction, enchanting, superheat and High Alchemy.
+* **Economy safety:** a clerk with a daily budget, a boot-time fair, and a coin watch that knows the
+  normal hourly swing and ignores boot-time sea crossings, so the new spending does not drain the
+  bots' coins unnoticed.
 
 ## What the add-ons do
 
 | Area | What players see | Main classes |
 | --- | --- | --- |
 | **Smart adventurers** | About 100 bots with goals, shifts, breaks, moods, crews and real gear. They roam, fight, mine, chop, fish, bank, shop on foot and buy upgrades. | `SmartAdventurers`, `AfkTasks` (the trip runner), `BotLife`, `ServiceBots`, `HuntMap`, `Preflight` |
+| **Skill training** (new) | Bots spread their time across skills, move up to better training spots, use guilds, and train Summoning, Farming, Hunter, Thieving, Agility, Runecrafting, Construction, Magic and Prayer. | `W5aSkills` to `W37Craft`, `Artisans`, `MineGuild`, `RcRun`, `Bob`, `Batch29` |
+| **Slayer** (new) | Up to four masters, real task lists, points, banking and a trip home. | `Slayer`, `W9Chaeldar`, `W13Duradel`, `HuntMap` |
 | **Economy** | Gatherers sell hauls to artisans, bot buyers or the Exchange. Prices follow the guide, drift towards shortages and react to bounties. Coins have sinks and caps, so nothing floods or drains. | `Ledger`, `MarketBrain`, `Economy`, `Deals`, `Artisans`, `Bounty`, `PriceDrift`, `BotPrices`, `CoinWatch` |
 | **Chat and haggling** | Bots answer directions, prices, quest hints and small talk, haggle over a stack of ore, and chime in on each other. | `BotChat`, `TradeTalk`, `Haggle`, `Bargain`, `PlayerTrades`, `TravellingTraders` |
-| **Questing bots** | 17 scripted quests (Cook's Assistant to Shield of Arrav, played by two bots) run through the server's real dialogue, with the server's own rewards. | `QuestRunner`, `QuestScript`, `QuestSteps`, `QuestFloors`, `DialogueDriver`, `Quest*` |
+| **Questing bots** | 17 scripted quests (Cook's Assistant to Shield of Arrav) run through the server's real dialogue, with the server's own rewards. | `QuestRunner`, `QuestScript`, `QuestSteps`, `QuestFloors`, `DialogueDriver`, `Quest*` |
 | **Pathing** | Bots learn the map by walking it, remember which crossings fail, respect skill and quest gates, avoid danger, and can use a grid planner. | `RouteMap`, `Gates`, `Heat`, `NavGrid`, `NavPlanner`, `NavWalker`, `Surveyors`, `Explorers`, `Resources` |
 | **Shows near players** | Arm-wrestles, dance-offs, boasts and races at hubs, a wave for newcomers, a comment when someone gets rescued. Only where a real player can see it. | `Spectacle`, `Scenes`, `Companions`, `BotRun` |
 | **Safety nets** | A watchdog rescues stuck bots, a coin-drain alarm watches the money supply, failures are recorded so a fix can be replayed on the exact trip. | `Watchdog`, `Failures`, `Scenarios`, `EconReplayer`, `SurveyWriter` |
@@ -109,6 +131,8 @@ quest runner) are in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
 3. Copy `deployment/seed/data/*` into the server's `data/` folder.
 4. Start the server with `overlay` ahead of `server.jar` on the classpath.
 5. Watch for `[SmartAdv]`, `[Artisans]` and `[Watchdog]` lines on the console.
+6. Optional: turn on the skill and Slayer behaviour with the switches in
+   [deployment/live-flags.txt](deployment/live-flags.txt) (all off by default).
 
 Every step with the exact commands and every flag is in [INSTALL.md](INSTALL.md).
 
@@ -120,6 +144,7 @@ Every step with the exact commands and every flag is in [INSTALL.md](INSTALL.md)
 * [docs/TECHNICAL-REFERENCE.md](docs/TECHNICAL-REFERENCE.md): the long version, class by class.
 * [docs/questing-bots.md](docs/questing-bots.md): how the quest scripts work and how to add one.
 * [docs/CHANGELOG.md](docs/CHANGELOG.md): what shipped, by month.
+* [deployment/live-flags.txt](deployment/live-flags.txt): the switches on the author's server today.
 * [deployment/tests/README.md](deployment/tests/README.md): the test harness (throwaway worlds on
   `127.0.0.1`, never a live server).
 

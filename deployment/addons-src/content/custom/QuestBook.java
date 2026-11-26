@@ -55,6 +55,7 @@ public final class QuestBook implements StartupListener {
         final List<int[]> pack = new ArrayList<>(), bank = new ArrayList<>(); // test bots only (adventurers keep theirs in smartbots.json)
         int completions, shifts; long lastFinish; boolean test; int[] tile; // tile: test bots come back where they were
         final Map<String, List<Long>> deaths = new HashMap<>(); // audit 10-23 Q-20: slug -> times this bot died on that quest (last 24 h)
+        final Map<Integer, Integer> got = new HashMap<>(); String gotFor; // quest1 (-Dquest.resume): item id -> amount the run of quest gotFor held in the pack at its last save
     }
     static final Map<String, BotQ> BOTS = new ConcurrentHashMap<>();
     /** slug -> UTC day -> {starts, completions, failures} */
@@ -88,6 +89,7 @@ public final class QuestBook implements StartupListener {
         register(QuestBlackKnightsFortress::build);
         register(QuestShieldOfArrav::build);
         register(QuestDruidicRitual::build);
+        if (QuestWolfWhistle.ON) register(QuestWolfWhistle::build); // P59 -Dquest.wolfWhistle (default off: not registered, flag off = live)
         for (String off : System.getProperty("quests.off", OFF_DEFAULT).split(",")) { QuestScript q = SCRIPTS.get(off.trim()); if (q != null) q.enabled = false; } // scripts not yet proven from an empty pack ship switched off
     }
 
@@ -165,8 +167,21 @@ public final class QuestBook implements StartupListener {
         BotQ b = BOTS.get(key(bot));
         if (b == null || b.shifts < 3) w *= 1.3; // new players did the starter quests
         if (b != null && System.currentTimeMillis() - b.lastFinish < 3_600_000L) w *= 0.5; // one just now: back to work for a bit
+        if (Summon.MOOD && s.quest == content.data.Quests.WOLF_WHISTLE) w *= wolfWhistleBoost(bot); // P79 S3
+        if (W6Combat.WW_QUEST && s.quest == content.data.Quests.WOLF_WHISTLE) { double f = W6Combat.wwFactor(combatOf(bot), Summon.MOOD ? wolfWhistleBoost(bot) : 1.0); if (f > 1.0) { w *= f; W6Combat.wwBoosted++; } } // W6 (-Dbots.summoning.wwQuest): the quest is a combat bot's way into Summoning
         if (s.quest == content.data.Quests.IMP_CATCHER) { int beads = 0; for (int id : new int[]{1470, 1472, 1474, 1476}) if (bot.getInventory().getAmount(id) + bot.getBank().getAmount(id) > 0) beads++; if (beads < 2) w *= 0.3; }
         return w;
+    }
+
+    static int combatOf(Player bot) { try { return bot.getProperties().getCurrentCombatLevel(); } catch (Throwable t) { return 0; } }
+
+    /** P79 S3 (-Dbots.summoning.mood): Wolf Whistle weighs 3x (18.5 -> 55) for a bot with combat 20+ within 120 tiles of Taverley/Falador (moderate, not forced). */
+    static final core.game.world.map.Location TAV_FAL = core.game.world.map.Location.create(2935, 3410, 0);
+    static double wolfWhistleBoost(Player bot) {
+        try {
+            core.game.world.map.Location l = bot.getLocation();
+            return bot.getProperties().getCurrentCombatLevel() >= 20 && l != null && l.getZ() == 0 && l.getDistance(TAV_FAL) <= 120 ? 3.0 : 1.0;
+        } catch (Throwable t) { return 1.0; }
     }
 
     /** chooseJob's quest offer: the best eligible quest if it beats the best job (always, under -Dquests.only). */
@@ -229,6 +244,7 @@ public final class QuestBook implements StartupListener {
         BotQ b = q(bot);
         if (Watchdog.FAIL_ON) try { if (FINISHED.size() > 20_000) FINISHED.clear(); if (!FINISHED.add(key(bot) + "|" + s.slug)) Watchdog.fev("quest", bot, "quest_reward", "reward-twice", "finished again", null, Watchdog.ctx("quest", s.slug, "completions", b.completions, "paid", coins)); } catch (Throwable ignored) { } // batch 19c B1 [Fable]: a second finish of this quest by this bot this boot (the saved stage 100 is set by checkpoint() just before every real finish, so "stage 100 before the call" would fire on all of them; a finish after a restart is QuestRunner's complete-at-the-start clause)
         b.active = null; b.step = 0; b.completions++; b.lastFinish = System.currentTimeMillis();
+        b.got.clear(); b.gotFor = null; // quest1
         b.stages.put(s.quest.name(), Math.max(100, s.stage(bot)));
         dayLog(s.slug)[1]++; hFinished++; Economy.QUEST_DONE.incrementAndGet(); // audit 10-23 batch14 item5
         coinCapHit(); coinsToday += coins; hCoins += coins;
@@ -250,6 +266,14 @@ public final class QuestBook implements StartupListener {
         int st = s.stage(bot); if (st > 0) b.stages.put(s.quest.name(), st);
         int[] d = dayLog(s.slug); d[2]++; hParked++;
         System.out.println("[Quests] " + bot.getUsername() + " " + s.slug + ": parked for 24 h after " + l.size() + " deaths today (audit 10-23 Q-20)");
+        saveSoon(false);
+    }
+
+    /** P83: the run stopped without blame and the quest waits for something outside the bot (no park, no resume until picked again). */
+    static synchronized void setAside(Player bot, QuestScript s) {
+        BotQ b = q(bot);
+        if (s.slug.equals(b.active)) { b.active = null; b.step = 0; }
+        int st = s.stage(bot); if (st > 0) b.stages.put(s.quest.name(), st);
         saveSoon(false);
     }
 
@@ -351,6 +375,163 @@ public final class QuestBook implements StartupListener {
         if (n > 0 || b.active != null) System.out.println("[Quests] " + bot.getUsername() + " restored " + n + " quest stages, " + b.attrs.size() + " attributes" + (b.active != null ? ", resumes " + b.active + " at step " + b.step : ""));
     }
 
+    // ------------------------------------------------------------------ quest1 (-Dquest.resume, default off): a restart resumes a quest with its items
+
+    /**
+     * quest1: the step state was already saved (active, step, stage and the quest attributes above; the engine quest stage is put
+     * back by restore0 and every finished step's checkpoint is skipped). What was missing is the run's item state: the ids that
+     * entered the pack during the run (QuestRunner.got) lived in memory only and nothing took a quest item back out of the bank.
+     * With the flag, got is saved in quests.json per bot ("gotV": 1, "gotFor": slug, "got": [[id, amount in the pack]]) at every
+     * finished step and every stop, and resume() takes those amounts back out of the bank before the first step is looked at.
+     */
+    static final boolean RESUME = Boolean.getBoolean("quest.resume");
+    static final int GOT_V = 1;
+
+    /** quest1: the run's own items and how many of each the pack holds now (game thread; coins are never in got). */
+    static synchronized void captureGot(Player bot, QuestRunner r) {
+        if (!RESUME || bot == null || r == null) return;
+        try {
+            Map<Integer, Integer> now = new HashMap<>();
+            for (int id : new ArrayList<>(r.got)) { int n = bot.getInventory().getAmount(id); if (n > 0) now.put(id, n); }
+            BotQ b = q(bot); b.gotFor = r.script.slug; b.got.clear(); b.got.putAll(now);
+        } catch (Throwable t) { System.out.println("[Quests] captureGot for " + bot.getUsername() + ": " + t); }
+    }
+
+    /** quest1: got into a bot's quests.json entry (nothing written when there is nothing to keep). */
+    @SuppressWarnings("unchecked")
+    static void putGot(JSONObject j, BotQ b) {
+        if (b.gotFor == null || b.got.isEmpty()) return;
+        JSONArray a = new JSONArray();
+        for (Map.Entry<Integer, Integer> e : new java.util.TreeMap<>(b.got).entrySet()) { JSONArray x = new JSONArray(); x.add(e.getKey()); x.add(e.getValue()); a.add(x); }
+        j.put("gotV", GOT_V); j.put("gotFor", b.gotFor); j.put("got", a);
+    }
+
+    /** quest1: reads it back; a missing, older, newer or malformed entry leaves got empty and never fails the book's load. */
+    static void readGot(JSONObject j, BotQ b) {
+        b.got.clear(); b.gotFor = null;
+        try {
+            if (j == null || !(j.get("gotV") instanceof Number) || ((Number) j.get("gotV")).intValue() != GOT_V) return;
+            if (!(j.get("gotFor") instanceof String) || !(j.get("got") instanceof JSONArray)) return;
+            Map<Integer, Integer> m = new HashMap<>();
+            for (Object o : (JSONArray) j.get("got")) { JSONArray x = (JSONArray) o; int id = ((Number) x.get(0)).intValue(), n = ((Number) x.get(1)).intValue(); if (id > 0 && id != 995 && n > 0) m.put(id, n); }
+            b.got.putAll(m); b.gotFor = (String) j.get("gotFor");
+        } catch (Throwable t) { b.got.clear(); b.gotFor = null; }
+    }
+
+    /** quest1 (pure): {id, amount} to take out of the bank so the pack holds the saved amount again (never more than the bank has). */
+    static List<int[]> planPull(Map<Integer, Integer> want, java.util.function.IntUnaryOperator pack, java.util.function.IntUnaryOperator bank) {
+        List<int[]> out = new ArrayList<>();
+        for (Map.Entry<Integer, Integer> e : new java.util.TreeMap<>(want).entrySet()) {
+            int take = Math.min(e.getValue() - pack.applyAsInt(e.getKey()), bank.applyAsInt(e.getKey()));
+            if (take > 0) out.add(new int[]{e.getKey(), take});
+        }
+        return out;
+    }
+
+    /** hunt-b: what a run of slug that starts now takes back (pure): the saved ids join runGot and planPull lists the bank pull; null when the saved list is empty or for another quest. */
+    static List<int[]> startPull(BotQ b, String slug, java.util.Set<Integer> runGot, java.util.function.IntUnaryOperator pack, java.util.function.IntUnaryOperator bank) {
+        if (b == null || slug == null || b.got.isEmpty() || !slug.equals(b.gotFor)) return null;
+        runGot.addAll(b.got.keySet());
+        return planPull(b.got, pack, bank);
+    }
+
+    /** hunt-b: called by QuestRunner.start for every real run from step 0 (resume() and a quest picked again after a park or a set-aside), so no start path skips the pull. */
+    static void onStart(Player p, QuestRunner r) {
+        if (!RESUME || p == null || r == null) return;
+        try { BotQ b = BOTS.get(key(p)); if (b != null) resumeItems(p, b, r); } catch (Throwable t) { System.out.println("[Quests] resume items for " + p.getUsername() + ": " + t); }
+    }
+
+    /** quest1: the run knows its items again and has them in the pack (QuestRunner.start via onStart, before the first pulse). */
+    static void resumeItems(Player p, BotQ b, QuestRunner r) {
+        List<int[]> plan = startPull(b, r.script.slug, r.got, id -> p.getInventory().getAmount(id), id -> p.getBank().getAmount(id));
+        if (plan == null) return;
+        Map<Integer, Integer> want = new HashMap<>(b.got);
+        int moved = 0;
+        for (int[] t : plan) {
+            boolean stack = false;
+            try { stack = new Item(t[0]).getDefinition().isStackable(); } catch (Throwable ignored) { }
+            int slots = !stack ? t[1] : p.getInventory().getAmount(t[0]) > 0 ? 0 : 1;
+            if (p.getInventory().freeSlots() < slots) QuestRunner.makeRoom(p, slots);
+            int take = stack ? t[1] : Math.min(t[1], p.getInventory().freeSlots());
+            if (take <= 0 || !p.getBank().remove(new Item(t[0], take))) continue;
+            if (p.getInventory().add(new Item(t[0], take))) moved += take; else p.getBank().add(new Item(t[0], take));
+        }
+        r.log("resume: " + want.size() + " quest item ids remembered, " + moved + " taken back out of the bank");
+    }
+
+    // ------------------------------------------------------------------ quest1 M3 (-Dquest.keepQuestItems): a quest's items are not sold at login
+
+    static final Map<String, Map<Integer, Integer>> NEEDS = new ConcurrentHashMap<>();
+
+    /** quest1 M3: how many of an item a script's steps ask for (Collect counts; one for a UseOn, Gather, Buy or Kill drop). */
+    static void needs(QuestSteps.Step s, Map<Integer, Integer> m) {
+        if (QuestRunner.FIX2 && s instanceof QuestBlackKnightsFortress.Guarded) { needs(((QuestBlackKnightsFortress.Guarded) s).in, m); return; } // quest2
+        if (s instanceof QuestSteps.Collect) { QuestSteps.Collect c = (QuestSteps.Collect) s; if (c.itemId != 995) m.merge(c.itemId, Math.max(1, c.n), Math::max); for (QuestSteps.Step x : c.plan) needs(x, m); if (c.buy != null) needs(c.buy, m); }
+        else if (s instanceof QuestSteps.UseOn) m.merge(((QuestSteps.UseOn) s).itemId, 1, Math::max);
+        else if (s instanceof QuestSteps.Gather) m.merge(((QuestSteps.Gather) s).itemId, 1, Math::max);
+        else if (s instanceof QuestSteps.Buy) m.merge(((QuestSteps.Buy) s).itemId, 1, Math::max);
+        else if (s instanceof QuestSteps.Kill) for (int d : ((QuestSteps.Kill) s).drops) m.merge(d, 1, Math::max);
+    }
+
+    static int need(String slug, int id) {
+        QuestScript s = slug == null ? null : SCRIPTS.get(slug);
+        if (s == null) return 0;
+        return NEEDS.computeIfAbsent(slug, k -> { Map<Integer, Integer> m = new HashMap<>(); for (QuestSteps.Step st : s.steps) needs(st, m); return m; }).getOrDefault(id, 0);
+    }
+
+    /**
+     * quest1 M3: how many of this item the bot's active or parked quest still wants in the pack (0 with the flag off or no quest).
+     * SmartAdventurers.restoreItems asks it at every login: it sent every tradeable pack item that is not a tool or food to the
+     * Exchange as "a haul in progress", so a bot that logged out or was restarted mid-quest sold its wool, dyes, bones and ores.
+     */
+    static synchronized int holdCount(String name, int id) {
+        if (!QuestRunner.KEEP_QUEST_ITEMS || !ON || name == null || id == 995) return 0;
+        try {
+            BotQ b = BOTS.get(name.toLowerCase(Locale.ROOT));
+            if (b == null) return 0;
+            registerWave1();
+            long now = System.currentTimeMillis(); int keep = 0; boolean gotLive = b.gotFor != null && b.gotFor.equals(b.active);
+            if (b.active != null) keep = need(b.active, id);
+            for (Map.Entry<String, Long> e : b.parked.entrySet()) if (e.getValue() > now) { keep = Math.max(keep, need(e.getKey(), id)); if (e.getKey().equals(b.gotFor)) gotLive = true; }
+            if (gotLive) keep = Math.max(keep, b.got.getOrDefault(id, 0));
+            if (QuestRunner.FIX3) keep = Math.max(keep, openHold(b, id)); // quest3
+            return keep;
+        } catch (Throwable t) { return 0; }
+    }
+
+    /** quest3: a saved quest stage that is started and not finished (every script here finishes at 100). */
+    static boolean openStage(Integer stage) { return stage != null && stage > 0 && stage < 100; }
+
+    /**
+     * quest3 (-Dquest.fix3): what the bot's open quests want of this item. holdCount only looked at the active quest and at parks
+     * still running, so once a 24 h park ran out (or a quest was set aside, which has no park) the next login sold the wool, ores
+     * and beads of a quest that was still at stage 10. The saved stages (quests.json "stages", kept at every checkpoint, abandon,
+     * set-aside and save) say which quests are open; each one's script needs count, and its saved run items, are held.
+     */
+    static int openHold(BotQ b, int id) {
+        int keep = 0;
+        for (Map.Entry<String, Integer> e : b.stages.entrySet()) {
+            if (!openStage(e.getValue())) continue;
+            QuestScript s = null;
+            for (QuestScript x : SCRIPTS.values()) if (x.quest.name().equals(e.getKey())) { s = x; break; }
+            if (s == null) continue;
+            keep = Math.max(keep, need(s.slug, id));
+            if (s.slug.equals(b.gotFor)) keep = Math.max(keep, b.got.getOrDefault(id, 0));
+        }
+        return keep;
+    }
+
+    /**
+     * quest3 (-Dquest.fix3): restoreItems' hold for one saved pack entry {id, n}. A profile saves the pack a slot at a time, so
+     * 25 balls of wool are 25 entries of 1 and min(1, holdCount) kept every one of them: the hold was only a bound for stackable
+     * items. soFar (one map per restoreItems call) counts what earlier entries of the id already kept.
+     */
+    static int holdEntry(String name, int id, int n, Map<Integer, Integer> soFar) {
+        int held = Math.max(0, Math.min(n, holdCount(name, id) - soFar.getOrDefault(id, 0)));
+        if (held > 0) soFar.merge(id, held, Integer::sum);
+        return held;
+    }
+
     // ------------------------------------------------------------------ quests.json
 
     /** Shutdown (the game loop has stopped): snapshot and write here. */
@@ -418,6 +599,8 @@ public final class QuestBook implements StartupListener {
         for (Map.Entry<String, BotQ> e : BOTS.entrySet()) {
             BotQ b = e.getValue(); JSONObject j = new JSONObject();
             if (b.active != null) { j.put("active", b.active); j.put("step", b.step); j.put("stage", b.stage); }
+            if (RESUME) putGot(j, b); // quest1
+            if (P92.ON) P92.put(j, e.getKey(), today()); // quest2: the Wolf Whistle hand-out count of this UTC day
             JSONObject pk = new JSONObject(); long now = System.currentTimeMillis(); for (Map.Entry<String, Long> x : b.parked.entrySet()) if (x.getValue() > now) pk.put(x.getKey(), x.getValue()); j.put("parked", pk);
             JSONObject st = new JSONObject(); st.putAll(b.stages); j.put("stages", st);
             JSONObject at = new JSONObject(); for (Map.Entry<String, Object[]> x : b.attrs.entrySet()) { JSONArray a = new JSONArray(); a.add(x.getValue()[0]); a.add(x.getValue()[1]); at.put(x.getKey(), a); } j.put("attrs", at);
@@ -452,6 +635,8 @@ public final class QuestBook implements StartupListener {
                 JSONObject pk = (JSONObject) j.get("parked"); if (pk != null) for (Object x : pk.keySet()) b.parked.put(String.valueOf(x), ((Number) pk.get(x)).longValue());
                 JSONObject st = (JSONObject) j.get("stages"); if (st != null) for (Object x : st.keySet()) b.stages.put(String.valueOf(x), ((Number) st.get(x)).intValue());
                 JSONObject at = (JSONObject) j.get("attrs"); if (at != null) for (Object x : at.keySet()) { JSONArray a = (JSONArray) at.get(x); b.attrs.put(String.valueOf(x), new Object[]{a.get(0), a.get(1)}); }
+                if (RESUME) readGot(j, b); // quest1
+                if (P92.ON) P92.read(j, String.valueOf(k), today()); // quest2
                 if (j.get("completions") != null) b.completions = ((Number) j.get("completions")).intValue();
                 if (j.get("lastFinish") != null) b.lastFinish = ((Number) j.get("lastFinish")).longValue();
                 if (j.get("shifts") != null) b.shifts = ((Number) j.get("shifts")).intValue();

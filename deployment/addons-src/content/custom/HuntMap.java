@@ -31,7 +31,12 @@ public final class HuntMap {
         int spawnsAtSpot;
         int[] products;         // tradeable drop ids
         double[] chance;        // chance per kill, capped at 1
+        String tag;             // slayer8: null, or the place name of an extra spot of the same family (its own label, crowd count and blacklist)
     }
+    /** The job label of a hunt ("Hill Giants"); an extra spot (slayer8) carries its place: "Grizzly bears (Ardougne east)". */
+    /** W8 (-Dbots.weaponByFoe): the weakness column, W8Polish.CRUSH or SLASH by the hunt's npc name (read only with the flag on). */
+    static int weakness(Hunt h) { return h == null ? W8Polish.SLASH : W8Polish.weakness(h.name); }
+    static String label(Hunt h) { return h.tag == null ? h.name + "s" : h.name + "s (" + h.tag + ")"; }
 
     static final List<Hunt> HUNTS = new ArrayList<>();
     /** Dungeon monsters the high tier hunts (E27); the spawn scan only covers the surface, so these spots are given. */
@@ -42,11 +47,30 @@ public final class HuntMap {
         CURATED.put("Lesser demon", Location.create(2840, 9565, 0));  // Karamja volcano
         CURATED.put("Fire giant", Location.create(2570, 9890, 0));    // Waterfall dungeon
         CURATED.put("Hill Giant", Location.create(3115, 9850, 0));    // Edgeville dungeon
+        if (W6Herbs.SUPPLY) CURATED.put(W6Herbs.DRUID_NAME, Location.create(W6Herbs.DRUID[0], W6Herbs.DRUID[1], 0)); // W6 (-Dartisans.herbSupply): Taverley dungeon; the 4 surface druids are in the locked tower
     }
     /** Drops that come from quests, random events or are otherwise not a real supply. */
     static final Set<Integer> DENY = new HashSet<>();
     static {
         for (int id : new int[]{995, 12158, 12159, 12160, 12163, 0, 1, 2}) DENY.add(id); // coins, charms, placeholder ids
+    }
+    /** P93 (-Dnav.p93Fix=true, default off): hunts whose densest spawn cluster sits in a walled pocket the planner cannot walk into
+     *  or out of (offline p38-navport BFS, seed nav-p0.bin 11-16) are not built. Zogre 2468,3046 (Jiggig burial ground): a 246-tile
+     *  pocket, cut off from the mainland and from 2451,3048; no zogre surface spawn is reachable; live train-44: Dunjins295 and a
+     *  second bot stood 5 min at 2451,3048 "path loop", paid teleport. Giant wasp 2891,3002 (south Karamja): a 41-tile pocket, no
+     *  wasp spawn reachable from the boat landing 2956,3146; train-43: "won't walk to Giant wasps from [2956,3146] (rescued, loop)",
+     *  stuck 2883,3139, and a bot put inside "won't walk to Gold from [2891,3002] (rescued, loop)". Name -> the pocket spot. */
+    static final boolean P93_FIX = Boolean.getBoolean("nav.p93Fix");
+    static final Map<String, Location> P93_POCKETS = new HashMap<>();
+    static {
+        P93_POCKETS.put("Zogre", Location.create(2468, 3046, 0));
+        P93_POCKETS.put("Giant wasp", Location.create(2891, 3002, 0));
+    }
+    static volatile int p93Dropped;
+    /** P93: true when the hunt named name with its spot at spot is one of the walled pockets (within 20 tiles of the recorded spot). */
+    static boolean p93Pocket(String name, Location spot) {
+        Location l = name == null || spot == null ? null : P93_POCKETS.get(name);
+        return l != null && spot.getZ() == 0 && l.getDistance(spot) <= 20;
     }
 
     static Location parseFirst(String locData, List<Location> out) {
@@ -93,14 +117,23 @@ public final class HuntMap {
                 for (int id : family) { List<Location> l = spawns.get(id); if (l != null) for (Location x : l) if (!Watchdog.trap(x)) { all.add(x); allIds.add(id); } } // no zoo cages or remembered traps
                 NPCDefinition d0 = NPCDefinition.forId(family.get(0));
                 Location curated = d0 != null && d0.getName() != null ? CURATED.get(d0.getName()) : null;
+                W6Slayer.Spot w6 = W6Slayer.ON && d0 != null ? W6Slayer.spotFor(true, d0.getName(), curated != null, all.size(), W6Slayer.keyWalkOk()) : null; // W6 (-Dbots.slayer.vannakaHunts): a Vannaka task's hunt
+                if (w6 != null && w6.at != null) curated = w6.at;
                 if (all.size() < 3 && curated == null) continue;
-                Location best = curated; int bestCount = curated != null ? 4 : 0;
+                int hill7 = 0; // slayer7 (-Dbots.slayer.fix7): Hill Giants hunt at the surface spawns north of the Observatory, not behind the brass key door
+                if (Slayer.FIX7 && curated != null) { for (Location d : all) if (d.getDistance(Slayer.HILL7) <= 15) hill7++; Location c7 = Slayer.hillSpot(true, d0.getName(), curated, hill7); if (c7 == curated) hill7 = 0; else { System.out.println("[HuntMap] slayer7: " + d0.getName() + " hunt at " + c7 + " (" + hill7 + " surface spawns), was " + curated); curated = c7; } }
+                Location best = curated; int bestCount = curated != null ? Math.max(4, hill7) : 0;
                 if (curated == null) for (Location c : all) {
                     int n = 0;
                     for (Location d : all) if (d.getDistance(c) <= 15) n++;
                     if (n > bestCount) { bestCount = n; best = c; }
                 }
                 if (best == null) continue;
+                if (Slayer.FIX8 && curated == null && d0 != null && Slayer.BEAR8_NAME.equals(d0.getName())) { // slayer8: the Black bear spot moves 14 tiles so 3 of the 4 bears by Goblin Village are in range, not 2
+                    int n8 = 0; for (Location d : all) if (d.getDistance(Slayer.BEAR8) <= 15) n8++;
+                    Location s8 = Slayer.spot8(true, d0.getName(), best, bestCount, n8);
+                    if (s8 != best) { System.out.println("[HuntMap] slayer8: " + d0.getName() + " hunt at " + s8 + " (" + n8 + " spawns), was " + best + " (" + bestCount + ")"); best = s8; bestCount = n8; }
+                }
                 // Drops: "default" (always) + "main" (weighted); chance = weight / total main weight.
                 List<int[]> prods = new ArrayList<>();
                 List<Double> chances = new ArrayList<>();
@@ -121,7 +154,7 @@ public final class HuntMap {
                     }
                 }
                 if (prods.isEmpty()) continue;
-                if (d0 == null || d0.getName() == null || !d0.hasAction("attack")) continue;
+                if (d0 == null || d0.getName() == null || !d0.hasAction("attack") && w6 == null) continue; // W6: the Vampire family's first id (1023) has no Attack; the spot's members do
                 Hunt h = new Hunt();
                 h.name = d0.getName();
                 h.npcLevel = d0.getCombatLevel();
@@ -136,10 +169,24 @@ public final class HuntMap {
                 else names.clear();
                 if (names.isEmpty()) for (int id : family) { NPCDefinition d = NPCDefinition.forId(id); if (d != null && d.getName() != null) names.add(d.getName()); }
                 h.names = names.toArray(new String[0]);
+                if (P93_FIX && (p93Pocket(h.name, best) || p93Pocket(d0.getName(), best))) { p93Dropped++; System.out.println("[P93] hunt " + h.name + " at " + best + " dropped: walled pocket, no walking route"); continue; }
+                if (W6Slayer.ICE_FIX && (W6Slayer.icePocket(h.name, best) || W6Slayer.icePocket(d0.getName(), best))) { W6Slayer.iceDropped.incrementAndGet(); System.out.println("[W6] hunt " + h.name + " at " + best + " dropped: White Wolf Mountain walled pocket (274 tiles), no walking route"); continue; } // W6 (-Dbots.slayer.iceGiantFix)
                 h.spot = best; h.spawnsAtSpot = bestCount;
+                if (w6 != null) W6Slayer.built(h, w6);
                 h.products = new int[prods.size()]; h.chance = new double[prods.size()];
                 for (int k = 0; k < prods.size(); k++) { h.products[k] = prods.get(k)[0]; h.chance[k] = chances.get(k); }
                 HUNTS.add(h);
+                if (Slayer.FIX8 && curated == null) for (Slayer.Alt8 a : Slayer.ALT8) { // slayer8: extra spots for a task's holders, each checked against the spawn file here
+                    if (!a.name.equals(d0.getName())) continue;
+                    int n8 = 0; boolean same = true;
+                    for (int k = 0; k < all.size(); k++) if (all.get(k).getDistance(a.at) <= 15) { n8++; if (!atSpot.contains(allIds.get(k))) same = false; }
+                    if (!Slayer.altOk8(true, n8, same, a.at.getDistance(best))) { System.out.println("[HuntMap] slayer8: no extra " + h.name + " spot at " + a.at + " (" + a.tag + "): spawns " + n8 + ", same monsters " + same + ", from the main spot " + (int) a.at.getDistance(best)); continue; }
+                    Hunt x = new Hunt();
+                    x.name = h.name; x.npcLevel = h.npcLevel; x.names = h.names; x.products = h.products; x.chance = h.chance;
+                    x.spot = a.at; x.spawnsAtSpot = n8; x.tag = a.tag;
+                    HUNTS.add(x);
+                    System.out.println("[HuntMap] slayer8: extra spot " + label(x) + " at " + a.at + " (" + n8 + " spawns)");
+                }
             }
             System.out.println("[HuntMap] " + HUNTS.size() + " monster families with surface spawns and tradeable drops");
         } catch (Throwable t) {
@@ -149,5 +196,27 @@ public final class HuntMap {
 
     static boolean tradeable(int id) {
         return MarketBrain.tradeable(id);
+    }
+
+    /** P91: highest Slayer levelReq of any Slayer task whose NPC name matches one of the hunt's names (0 = none). Cached per hunt. */
+    static final Map<Hunt, Integer> SLAYER_NEED = new java.util.concurrent.ConcurrentHashMap<>();
+    static int slayerNeed(Hunt h) {
+        if (h == null || h.names == null) return 0;
+        Integer c = SLAYER_NEED.get(h);
+        if (c != null) return c;
+        int need = 0;
+        try {
+            for (content.global.skill.slayer.Tasks t : content.global.skill.slayer.Tasks.values()) {
+                if (t.levelReq <= need || t.ids == null) continue;
+                outer:
+                for (int id : t.ids) {
+                    NPCDefinition d = NPCDefinition.forId(id);
+                    if (d == null || d.getName() == null) continue;
+                    for (String nm : h.names) if (nm != null && nm.equalsIgnoreCase(d.getName())) { need = Math.max(need, t.levelReq); break outer; }
+                }
+            }
+        } catch (Throwable t) { return 0; }
+        SLAYER_NEED.put(h, need);
+        return need;
     }
 }

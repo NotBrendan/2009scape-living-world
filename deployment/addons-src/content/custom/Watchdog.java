@@ -61,13 +61,13 @@ public final class Watchdog implements StartupListener {
         if (Boolean.getBoolean("watchdog.test")) GameWorld.getPulser().submit(new Pulse(200) { // trials only: put a bot in the unicorn pen
             @Override public boolean pulse() {
                 for (SmartAdventurers.Brain br : SmartAdventurers.BRAINS.values()) if (br.bot != null && br.bot.isActive()) {
-                    br.bot.getProperties().setTeleportLocation(Location.create(2628, 3268, 0));
+                    Bob.tele(br.bot).getProperties().setTeleportLocation(Location.create(2628, 3268, 0));
                     testBot = key(br.bot); System.out.println("[Watchdog] test: put " + br.bot.getUsername() + " in the unicorn pen"); return true;
                 }
                 return false; // no bot out yet: try again
             }
         });
-        System.out.println("[Watchdog] stuck bots are rescued after " + STUCK_MS / 60_000 + " min; " + TRAPS.size() + " trap spots remembered");
+        System.out.println("[Watchdog] stuck bots are rescued after " + STUCK_MS / 60_000 + " min; " + TRAPS.size() + " trap spots remembered" + (TRIP_NAV_ONLY ? ", rescue-trip only with the planner on" : ""));
     }
 
     static String key(Player p) { return p.getUsername().toLowerCase(Locale.ROOT); }
@@ -156,6 +156,13 @@ public final class Watchdog implements StartupListener {
         return best != null ? best : land != null ? land : any; // no bank on this side of the water that it may use: one across it (a teleport does not mind), then the old nearest
     }
     static final boolean BANK_REACH = !"false".equals(System.getProperty("bank.reach", "true"));
+
+    /** Batch 27 fix 1 (-Dhubs.bank): Hubs.bankFor with nearestBank's own reach test (gates, the toll, the sea) from the surface above {@code at}. */
+    static Location hubsBank(Location at, Location bank, Player p) {
+        if (bank == null || at == null || !Hubs.on()) return bank;
+        Location surface = Location.create(at.getX(), at.getY() > 6400 ? at.getY() - 6400 : at.getY(), 0);
+        return Hubs.bankFor(surface, bank, b -> !BANK_REACH || bankReachable(surface, b, p, true));
+    }
 
     /** The batch 22-1 test behind nearestBank: false for a bank across a gate, a toll or (noSea) the sea from {@code from}. Pure apart from Gates. */
     static boolean bankReachable(Location from, Location b, Player p, boolean noSea) {
@@ -387,11 +394,20 @@ public final class Watchdog implements StartupListener {
     static int loops;
     /** batch 26 fix 1: -Drescue.trip=false: every rescue goes to the bank (the batch 21 way). */
     static final boolean TRIP_ON = !"false".equals(System.getProperty("rescue.trip"));
+    /** P40 B3: -Drescue.tripNavOnly=true: the paid rescue-trip only while the planner is on (NavWalker.ON); planner off = the free bank rescue. Not final: TestP40Rescue flips it. */
+    static volatile boolean TRIP_NAV_ONLY = Boolean.getBoolean("rescue.tripNavOnly");
     static int tripRescues;
 
     static void rescue(Player p, Location at, long mins, Location anchor, boolean inTrap, boolean caged, String loopWhy) {
+        Bob.leave(p, "rescue"); // P86 hook 2
+        try { Scenes.Greet.drop(p, "rescue"); } catch (Throwable ignored) { } // P57 A5: before the teleport
+        if (Summon.ON && p.isArtificial()) try { SmartAdventurers.Brain sb = SmartAdventurers.brainOf(p); if (sb != null) sb.summonRescued(); } catch (Throwable ignored) { } // P62: a rescue ends the summoning errand (-Dbots.summoning)
+        if (PrayerRun.ON && p.isArtificial()) try { SmartAdventurers.Brain sb = SmartAdventurers.brainOf(p); if (sb != null) sb.boneRescued(); } catch (Throwable ignored) { } // P69 #10: and the bone run (-Dbots.prayerRun)
+        if (Farming.ON && p.isArtificial()) try { SmartAdventurers.Brain sb = SmartAdventurers.brainOf(p); if (sb != null) sb.farmRescued(); } catch (Throwable ignored) { }
+        if (SmartAdventurers.BRAIN_FIX1 && p.isArtificial()) try { SmartAdventurers.Brain sb = SmartAdventurers.brainOf(p); if (sb != null) sb.errandsRescued(); } catch (Throwable ignored) { } // C8 review S2: a rescue ends the farm run (crops stay due)
         Location bank = nearestBank(at, p);
         if (bank == null) return;
+        if (p.isArtificial()) bank = hubsBank(at, bank, p); // batch 27 fix 1: not into an over-band hub when another bank is within +60 tiles (the teleport stays free)
         String doing = BotChat.activityOf(p);
         try { Goal g = goal(p); scenario(p, "rescue", g.walker, g.from != null ? g.from : anchor != null ? anchor : at, g.to, at, (loopWhy != null ? loopWhy : "stuck " + mins + " min" + (caged ? " in an enclosure" : inTrap ? " in a learned trap cell" : "")) + ", " + g.walker + " " + g.kind + ", planner " + g.navShort, g); } catch (Throwable ignored) { } // batch 18 item1: before the teleport clears the walk // batch 19a B2: + the failure record
         fdrv(p, Failures.DRV_WATCHDOG); // batch 19a design 3.1: after the record (it reports the walker that stalled), the teleport is ours
@@ -401,7 +417,7 @@ public final class Watchdog implements StartupListener {
         try { SmartAdventurers.legFailed(p, tr, "rescued, " + path); } catch (Throwable ignored) { } // batch 26 fix 2: that job from that bank, not on foot again for a while
         Location land = null; long fare = 0;
         try { // batch 26 fix 1: a mid-trip rescue finishes the trip with the paid teleport the Runner's own stall rule would take (AfkTasks walk(), payTeleport); free only to the bank
-            if (TRIP_ON && tr != null && !tr.halted && tr.dest != null && p.isArtificial() && !trap(tr.dest)
+            if (TRIP_ON && (NavWalker.ON || !TRIP_NAV_ONLY) && tr != null && !tr.halted && tr.dest != null && p.isArtificial() && !trap(tr.dest)
                     && (tr.state == AfkTasks.State.TO_SPOT || tr.state == AfkTasks.State.TO_BANK || tr.state == AfkTasks.State.TO_FURNACE)) {
                 long c0 = Ledger.Wallet.coins(p);
                 if (Ledger.Wallet.payTeleport(p, "rescue-trip")) { land = landing(tr.dest); fare = c0 - Ledger.Wallet.coins(p); }
@@ -414,7 +430,7 @@ public final class Watchdog implements StartupListener {
             rescued++; tripRescues++;
             NavWalker.rescued(p);
             String line = "[Watchdog] " + p.getUsername() + " stuck at " + at + " for " + mins + " min" + (doing != null ? " (" + doing + ")" : "") + ", paid teleport (" + fare + " gp) to " + land + " to finish the trip to " + tr.dest + ", path " + path;
-            System.out.println(line); flog(p, line);
+            System.out.println(line); flog(p, line); Scen.stuck(p, at); // W8 scenario count (seed flags on only)
             try { Scenes.RescueTalk.saw(p, at, land, System.currentTimeMillis()); } catch (Throwable ignored) { } // batch 28: a bot nearby remarks on it (Scenes.java)
             final Player bot = p;
             GameWorld.getPulser().submit(new Pulse(1) {
@@ -430,7 +446,7 @@ public final class Watchdog implements StartupListener {
         rescued++;
         NavWalker.rescued(p); // planner-guard-fix F1: charged to the planner only if it was walking this bot
         String line = "[Watchdog] " + p.getUsername() + " stuck at " + at + " for " + mins + " min" + (doing != null ? " (" + doing + ")" : "") + ", teleported to the bank at " + bank + ", path " + path; // batch 26 fix 5: the path tag
-        System.out.println(line); flog(p, line); // batch 19a design 3.2
+        System.out.println(line); flog(p, line); Scen.stuck(p, at); // batch 19a design 3.2; W8 scenario count (seed flags on only)
         try { Scenes.RescueTalk.saw(p, at, bank, System.currentTimeMillis()); } catch (Throwable ignored) { } // batch 28
         // End its task so it chooses a new one from the bank instead of walking straight back in.
         final Player bot = p;

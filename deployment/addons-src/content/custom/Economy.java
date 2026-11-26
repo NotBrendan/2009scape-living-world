@@ -293,6 +293,8 @@ public final class Economy implements StartupListener {
             crews.add(j);
         }
         root.put("crews", crews);
+        JSONObject hubs = Hubs.LAST; // batch 27: the latest hub census (absent when -Dhubs=false, data/hubs.off or before the first census)
+        if (hubs != null) root.put("hubs", hubs);
 
         try {
             file().getParentFile().mkdirs();

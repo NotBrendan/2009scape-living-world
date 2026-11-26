@@ -77,6 +77,9 @@ final class QuestGoblinDiplomacy {
     /** Raw goblin mails still to be dyed. */
     static int rawForDye(Player p) { return (orangeDone(p) ? 0 : 1) + (blueDone(p) ? 0 : 1); }
     static boolean enoughRaw(Player p) { return p.getInventory().getAmount(MAIL) >= rawForDye(p); }
+    /** quest2 (-Dquest.goblinFix, pure): 1 = a made item (dyed mail, orange dye) the quest still needs is owned (pack or bank) and belongs in the pack; 0 = past its stage or not owned. */
+    static int madeWant(int stage, int doneStage, int inPack, int inBank) { return stage < doneStage && inPack + inBank > 0 ? 1 : 0; }
+    static int owned(Player p, int id) { return p.getInventory().getAmount(id) + p.getBank().getAmount(id); }
     static boolean nearGenerals(Player p) { return p.getLocation().getZ() == 0 && p.getLocation().getDistance(GENERALS_AT) <= 40; }
 
     static QuestSteps.Talk longTalk(QuestSteps.Talk t) { t.limitTicks = 450; return t; }
@@ -153,7 +156,28 @@ final class QuestGoblinDiplomacy {
     }
 
     static QuestSteps.Step handIn(String what, int newStage) {
+        if (FIX) return longTalk(new QuestSteps.Talk("show the generals the " + what + " armour", GENERALS, 3)).done(p -> { syncColour(p); return stageAtLeast(Q, newStage).test(p); });
         return longTalk(new QuestSteps.Talk("show the generals the " + what + " armour", GENERALS, 3)).done(stageAtLeast(Q, newStage));
+    }
+
+    /**
+     * P47 -Dquest.goblinFix (default off). The generals pick the armour to show from varp 62 (GrubFoot.forConfig: the colour
+     * after the one last shown), and the plugin only sets it after a showing (GrubFoot.setConfig) or when the quest tab syncs
+     * (Quest.start, login: GoblinDiplomacy.getConfig 10 -> 1, 20 -> 4, 30 -> 5). A stage restored with setStageNonmonotonic
+     * (QuestBook's saved stages, the trials) leaves it at 0, which reads as NORMAL: the first showing then takes the plain
+     * mail (288), the third asks for blue, and its brown ending removes 288 to finish, finds none and stays at stage 30.
+     * Before each showing this sets varp 62 to the value the quest's own table gives for the stage.
+     */
+    static final boolean FIX = Boolean.getBoolean("quest.goblinFix");
+    static final int COLOUR_VARP = 62;
+    static int colourFor(int stage) { return stage == 10 ? 1 : stage == 20 ? 4 : stage == 30 ? 5 : -1; }
+    static boolean syncColour(Player p) {
+        try {
+            int want = colourFor(stage(p));
+            if (want < 0 || core.api.ContentAPIKt.getVarp(p, COLOUR_VARP) == want) return false;
+            core.api.ContentAPIKt.setVarp(p, COLOUR_VARP, want);
+            return true;
+        } catch (Throwable t) { return false; }
     }
 
     static QuestScript build() {
@@ -163,6 +187,11 @@ final class QuestGoblinDiplomacy {
         // start
         s.step(new QuestSteps.Walk("walk to the goblin generals", GENERALS_AT, 4).done(p -> stage(p) >= 10 || nearGenerals(p) && p.getLocation().getDistance(GENERALS_AT) <= 4));
         s.step(longTalk(new QuestSteps.Talk("ask the generals about their armour", GENERALS, 3)).until(stageAtLeast(Q, 10)).done(stageAtLeast(Q, 10)));
+        if (FIX) { // quest2: the made items had no bank read (only a Collect has one), so a banked dyed mail or orange dye sent the bot through the whole dye chain again; as Collects they are in keepIds too
+            s.step(new QuestSteps.Collect("take the orange mail out of the bank", ORANGE_MAIL, 1).count(p -> madeWant(stage(p), 20, p.getInventory().getAmount(ORANGE_MAIL), p.getBank().getAmount(ORANGE_MAIL))).noStock().limit(60).optional());
+            s.step(new QuestSteps.Collect("take the blue mail out of the bank", BLUE_MAIL, 1).count(p -> madeWant(stage(p), 30, p.getInventory().getAmount(BLUE_MAIL), p.getBank().getAmount(BLUE_MAIL))).noStock().limit(60).optional());
+            s.step(new QuestSteps.Collect("take the orange dye out of the bank", ORANGE_DYE, 1).count(p -> owned(p, ORANGE_MAIL) > 0 ? 0 : madeWant(stage(p), 20, p.getInventory().getAmount(ORANGE_DYE), p.getBank().getAmount(ORANGE_DYE))).noStock().limit(60).optional());
+        }
 
         // two raw mails for dyeing: the crates beside the generals, else bot stock, else goblins
         s.step(crate("search the first crate", CRATE_A, CRATE_A_AT, QuestGoblinDiplomacy::enoughRaw));

@@ -1,0 +1,23 @@
+{
+  "_note": "Batch 27 hub bands (the design notes section 3). Bots within radius tiles of x,y (plane 0) are counted every 10 min. Day band dayMin-dayMax, evening (23:00-04:00 UTC) eveMin-eveMax. A hub with no band fields is counted only. Shipped default: copied to data/eco/hubs.json on first boot; edit that copy. A hub may give its own breakRange (breaks within that many tiles go there while it is under; batch 27 fix 3, only with -Dhubs.breaks=true). Lumbridge-only rescope (the design notes section 4): only Lumbridge is banded, the other hubs are counted only. Off: -Dhubs=false or the file data/hubs.off. Train-4 thermostat (-Dhubs.thermostat=true, off by default): a hub arms at the edge of its band after thermostatWindows censuses (1) and holds until the count reaches the band's middle; the first census after boot arms nothing; underWindows is the old rule's delay and is not read with the flag on.",
+  "boost": 1.3,
+  "damp": 0.8,
+  "jobRange": 60,
+  "breakRange": 160,
+  "underWindows": 2,
+  "thermostatWindows": 1,
+  "hubs": [
+    {"name": "Lumbridge", "x": 3222, "y": 3219, "radius": 20, "dayMin": 8, "dayMax": 12, "eveMin": 12, "eveMax": 18},
+    {"name": "GE", "x": 3165, "y": 3487, "radius": 20},
+    {"name": "Varrock", "x": 3212, "y": 3429, "radius": 20},
+    {"name": "Draynor", "x": 3088, "y": 3248, "radius": 20},
+    {"name": "Barbarian", "x": 3082, "y": 3417, "radius": 20},
+    {"name": "Falador", "x": 2976, "y": 3376, "radius": 22},
+    {"name": "AlKharid", "x": 3293, "y": 3177, "radius": 20},
+    {"name": "PortSarim", "x": 3032, "y": 3222, "radius": 20},
+    {"name": "Edgeville", "x": 3090, "y": 3497, "radius": 20},
+    {"name": "Catherby", "x": 2826, "y": 3436, "radius": 20},
+    {"name": "Seers", "x": 2725, "y": 3488, "radius": 20},
+    {"name": "Ardougne", "x": 2662, "y": 3306, "radius": 20}
+  ]
+}

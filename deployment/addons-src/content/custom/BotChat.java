@@ -892,6 +892,10 @@ public final class BotChat implements StartupListener, TickListener {
                 if (ans != null) { Memory.topic(speaker, "that quest"); return ans; }
                 if (question) { out.add("Every quest guide is on the website, under Quests. Which one did you mean?"); return out; }
             }
+            if (t.matches(".*\\b(task|slayer)\\b.*") && !t.contains("dragon slayer")) {
+                String slr = Slayer.taskReplyFor(bot);
+                if (slr != null) { out.add(slr); return out; }
+            }
             // --- about the bot
             if (t.matches(".*\\b(what are you doing|what you doing|what do you do|whatcha doing|up to|what are you up to|busy)\\b.*")) {
                 String a = activityOf(bot);

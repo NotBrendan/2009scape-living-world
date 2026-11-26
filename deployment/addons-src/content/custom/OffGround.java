@@ -656,7 +656,7 @@ final class OffGround {
             retired = true; LIVE.decrementAndGet();
             System.out.println("[OffGround] " + bot.getUsername() + " retired: " + why + " (" + visits + " places recorded this time; " + counts() + ")");
             BotChat.clearActivity(bot);
-            try { ((AIPlayer) bot).clear(); } catch (Throwable t) { System.out.println("[OffGround] could not retire " + bot.getUsername() + ": " + t); }
+            try { Bob.leave(bot, "retire"); } catch (Throwable ignored) { } try { ((AIPlayer) bot).clear(); } catch (Throwable t) { System.out.println("[OffGround] could not retire " + bot.getUsername() + ": " + t); }
         }
 
         @Override

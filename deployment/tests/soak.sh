@@ -4,7 +4,8 @@
 #   Env: SEED (live | <dir>), RUN (results subfolder, default <date>), JAVA/JAVAC, XMX.
 #   Writes <results>/<RUN>/soak-<tag>-<wNN>.txt and the world log next to it. Exceptions exclude the two known shutdown-time ones.
 #   batch 24b: a DEALS line (harness/deals-line.sh: Bargain sales/walk-aways logged during the soak); exit 5 if any final is outside [floor, list].
-#   batch 22: an ECON line (CoinWatch baseline/last total, paid sea crossings); exit 4 if bot coins fell over ECON_DROP_PCT (default 15).
+#   batch 22: an ECON line (CoinWatch start/last total, paid sea crossings); exit 4 if bot coins fell over ECON_DROP_PCT (default 15).
+#   train-57: harness/econ-line.sh <log> makes it; start(roster) = the "boot roster in" total when the log has one, else start(baseline).
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"; W="$1"; BLD="$2"; MIN="$3"; TAG="$4"; shift 4
 export WORLD="$W"; . "$HERE/harness/env.sh"
@@ -22,12 +23,7 @@ cp "$L" "$R/soak-$TAG-$W.log"
 SV="$ME/qt/game/data/survey"
 EXRE='^(Exception in thread|[a-zA-Z_$][a-zA-Z0-9_$.]*(Exception|Error)(:|$))'
 # batch 22 task 4 (bug 296): coins at start/end from the CoinWatch lines, paid sea crossings from the [SmartAdv] crossing line
-CB=$(grep -a '^\[CoinWatch\] baseline ' "$L" | head -1 | tr -d '\r' | awk '{print $3}'); CE=$(grep -a '^\[CoinWatch\] total ' "$L" | tail -1 | tr -d '\r' | awk '{print $3}')
-SEA=$(grep -a ' crossing the sea to ' "$L" | grep -cE ': (the boat|.* gp\))'); CWA=$(grep -ac '^\[CoinWatch\] ALARM' "$L"); EPCT="${ECON_DROP_PCT:-15}"; ECON_RC=0
-if [ -n "$CB" ] && [ -n "$CE" ] && [ "$CB" -gt 0 ] 2>/dev/null; then
-  CD=$(( (CB - CE) * 100 / CB )); EV=PASS; [ "$CD" -gt "$EPCT" ] && { EV=FAIL; ECON_RC=4; }
-  ECON="ECON $EV: bot coins start $CB end $CE (drop ${CD}%, limit ${EPCT}%), paid sea crossings $SEA, CoinWatch alarms $CWA"
-else ECON="ECON n/a: no CoinWatch baseline/total lines (-Dcoinwatch=false, no bots, or a soak under the warm-up), paid sea crossings $SEA, CoinWatch alarms $CWA"; fi
+ECON="$(bash "$HERE/harness/econ-line.sh" "$L")"; ECON_RC=$? # train-57: start = the boot roster total when logged, else the first baseline (harness/econ-line.sh)
 # batch 24b item 4: Bargain deals logged during this soak (lines dated from T0), and the engine's own OFF trips
 DL="$ME/qt/game/data/botchat-deals.log"; BOFF=$(grep -ac '^\[Bargain\] OFF' "$L")
 DEALS="$(bash "$HERE/harness/deals-line.sh" "$(date -u -d @$T0 +%FT%T)" "$DL.1" "$DL"), [Bargain] OFF lines $BOFF"; DEALS_RC=0; case "$DEALS" in "DEALS FAIL"*) DEALS_RC=5;; esac

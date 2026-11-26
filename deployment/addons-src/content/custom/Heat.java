@@ -69,6 +69,11 @@ public final class Heat implements StartupListener {
     /** batch 20 B1: the combat band of a walker for the planner: 1 under combat 30, 2 under 60, else 0 (no extra cost). Bots only. */
     static int band(core.game.node.entity.player.Player p) {
         if (!BAND_ON || p == null || !p.isArtificial()) return 0;
+        return bandAny(p);
+    }
+    /** P58: the same band for any walker; NavWalker uses it for a player's ::afk walk (Draynor -> Lumbridge furnace walked a level-3 player past the jail guards). */
+    static int bandAny(core.game.node.entity.player.Player p) {
+        if (!BAND_ON || p == null) return 0;
         int cb = 99; try { cb = p.getProperties().getCurrentCombatLevel(); } catch (Throwable ignored) { }
         return cb < 30 ? 1 : cb < 60 ? 2 : 0;
     }

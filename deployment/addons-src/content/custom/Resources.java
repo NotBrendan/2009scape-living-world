@@ -68,6 +68,45 @@ final class Resources {
         }
     }
 
+    /** P43: -Dresources.skipPockets=true (default off) drops remembered spots inside the two mountain pockets that surveyors were teleported into (the design notes). */
+    static final boolean SKIP_POCKETS = Boolean.getBoolean("resources.skipPockets");
+    /** Pocket boxes x0,y0,x1,y1: A = cliff pocket 2811,3506; B = Death Plateau pocket 2923,3612 (climbing boots only). */
+    static final int[][] POCKETS = {{2800, 3500, 2828, 3518}, {2880, 3598, 2924, 3643}, {2810, 3228, 2868, 3314}}; // p60: Crandor (skeleton spot 2840,3240, no route)
+    static boolean inPocket(int x, int y) {
+        for (int[] b : POCKETS) if (x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]) return true;
+        return false;
+    }
+    /** True when the flag is on and l lies in a pocket box: callers skip the spot. */
+    static boolean skipSpot(Location l) { return SKIP_POCKETS && l != null && l.getZ() == 0 && inPocket(l.getX(), l.getY()); }
+
+    /** P49: -Dhunt.skipUnreachable=true (default off) drops hunt goals no walk reaches: a pocket box (ice giants 2811,3506: 31 Watchdog
+     *  rescues in 16 h at 2838,3549 / 3007,3514) and the swamp south of the mort-myre gate box (blamish snails 3421-3437 x 3299-3314: 53
+     *  at the gate, 3442/3433,3458) for a bot that has not started Nature Spirit. Flood fill on nav-p0 with the gate and the box shut: no
+     *  tile of MYRE_SOUTH is reached from Canifis. Counts go to the log every 50 skips ([HuntSkip]). */
+    static final boolean SKIP_UNREACHABLE_HUNTS = Boolean.getBoolean("hunt.skipUnreachable");
+    static final int[] MYRE_SOUTH = {3400, 3260, 3520, 3319};
+    static boolean inMyreSouth(int x, int y) { return x >= MYRE_SOUTH[0] && x <= MYRE_SOUTH[2] && y >= MYRE_SOUTH[1] && y <= MYRE_SOUTH[3]; }
+    /** Pure test: "pocket", "myre" or null. */
+    static String huntBlock(Location spot, boolean natureSpirit) {
+        if (spot == null || spot.getZ() != 0) return null;
+        if (inPocket(spot.getX(), spot.getY())) return "pocket";
+        if (!natureSpirit && inMyreSouth(spot.getX(), spot.getY())) return "myre";
+        return null;
+    }
+    static final java.util.concurrent.atomic.AtomicInteger HUNT_SKIP_POCKET = new java.util.concurrent.atomic.AtomicInteger(), HUNT_SKIP_MYRE = new java.util.concurrent.atomic.AtomicInteger();
+    /** True when the flag is on and this bot can't walk to the hunt spot: callers skip the job. */
+    static boolean skipHunt(core.game.node.entity.player.Player bot, Location spot) {
+        if (!SKIP_UNREACHABLE_HUNTS || spot == null || spot.getZ() != 0) return false;
+        if (P84.ON && P84.inPocket(spot.getX(), spot.getY())) { P84.count("hunt-skip", P84.SKIP, (bot == null ? "?" : bot.getUsername()) + " at " + spot.getX() + "," + spot.getY()); return true; } // P84 fix 2: Karamja's jogre/monkey pocket
+        boolean ns = false;
+        if (inMyreSouth(spot.getX(), spot.getY())) try { ns = bot.getQuestRepository().hasStarted(content.data.Quests.NATURE_SPIRIT); } catch (Throwable t) { ns = false; }
+        String why = huntBlock(spot, ns);
+        if (why == null) return false;
+        int n = ("pocket".equals(why) ? HUNT_SKIP_POCKET : HUNT_SKIP_MYRE).incrementAndGet();
+        if (n % 50 == 1) System.out.println("[HuntSkip] " + why + " " + n + " (" + (bot == null ? "?" : bot.getUsername()) + " at " + spot.getX() + "," + spot.getY() + "), pocket " + HUNT_SKIP_POCKET.get() + " myre " + HUNT_SKIP_MYRE.get());
+        return true;
+    }
+
     /** The nearest busy cluster of something (e.g. "rock:coal", "fish:cage", key prefix "npc:chaos druid"), or null. */
     static Location nearest(String keyPrefix, Location from) {
         load();
@@ -78,6 +117,7 @@ final class Resources {
                 if (c.getValue() < 2) continue; // seen at least twice: a real spot, not a wanderer
                 int[] b = RouteMap.BEST.get(c.getKey());
                 Location l = b != null ? Location.create(b[0], b[1], 0) : Location.create(RouteMap.cx(c.getKey()) * RouteMap.CELL + 4, RouteMap.cy(c.getKey()) * RouteMap.CELL + 4, 0);
+                if (skipSpot(l)) continue;
                 double d = l.getDistance(from);
                 if (d < bd) { bd = d; best = l; }
             }
@@ -99,6 +139,7 @@ final class Resources {
                 if (c.getValue() < 2) continue;
                 int[] b = RouteMap.BEST.get(c.getKey());
                 Location l = b != null ? Location.create(b[0], b[1], 0) : Location.create(RouteMap.cx(c.getKey()) * RouteMap.CELL + 4, RouteMap.cy(c.getKey()) * RouteMap.CELL + 4, 0);
+                if (skipSpot(l)) continue;
                 double d = l.getDistance(from);
                 if (d < bd) { bd = d; best = l; }
             }
