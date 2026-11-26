@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="820" height="694" viewBox="0 0 820 694" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
-<title>Bot share of each skill vs the real-player target, November 25 2026</title>
+<title>Bot share of each skill vs the real-player goal, recommended switches on</title>
 <rect width="820" height="694" rx="8" fill="#1a1a19"/>
-<text x="20" y="28" font-size="16" font-weight="600" fill="#f0efec">How much of each skill the bots really do (Nov 25, 2026)</text>
-<text x="20" y="48" font-size="12" fill="#c3c2b7">Estimated share of what a real 2009 player does in that skill, from 24 h of server logs. Mean 34.8% vs target 54.6%.</text>
-<rect x="120" y="58" width="22" height="10" rx="3" fill="#3987e5"/><text x="148" y="67" font-size="12" fill="#c3c2b7">Bots today</text>
-<rect x="240" y="55" width="3" height="16" rx="1" fill="#d95926"/><text x="250" y="67" font-size="12" fill="#c3c2b7">Target</text>
+<text x="20" y="28" font-size="16" font-weight="600" fill="#f0efec">How much of each skill the bots do</text>
+<text x="20" y="48" font-size="12" fill="#c3c2b7">Estimated share of what a real 2009 player does in each skill, with the recommended switches on. Mean 34.8%, goal 54.6%.</text>
+<rect x="120" y="58" width="22" height="10" rx="3" fill="#3987e5"/><text x="148" y="67" font-size="12" fill="#c3c2b7">Bots</text>
+<rect x="240" y="55" width="3" height="16" rx="1" fill="#d95926"/><text x="250" y="67" font-size="12" fill="#c3c2b7">Goal</text>
 <line x1="120.0" y1="74" x2="120.0" y2="654" stroke="#383835" stroke-width="1"/>
 <text x="120.0" y="670" font-size="11" fill="#c3c2b7" text-anchor="middle">0%</text>
 <line x1="280.0" y1="74" x2="280.0" y2="654" stroke="#383835" stroke-width="1"/>
@@ -15,122 +15,122 @@
 <text x="600.0" y="670" font-size="11" fill="#c3c2b7" text-anchor="middle">75%</text>
 <line x1="760.0" y1="74" x2="760.0" y2="654" stroke="#383835" stroke-width="1"/>
 <text x="760.0" y="670" font-size="11" fill="#c3c2b7" text-anchor="middle">100%</text>
-<g><title>Mining: bots 64%, target 75% (gap 11)</title>
+<g><title>Mining: bots 64%, goal 75% (gap 11)</title>
 <text x="110" y="94.0" font-size="12" fill="#f0efec" text-anchor="end">Mining</text>
 <path d="M120,85.0 h405.6 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-405.6 z" fill="#3987e5"/>
 <rect x="598.5" y="82.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="608.0" y="94.0" font-size="11" fill="#c3c2b7">64% / 75%</text></g>
-<g><title>Hitpoints: bots 62%, target 75% (gap 13)</title>
+<g><title>Hitpoints: bots 62%, goal 75% (gap 13)</title>
 <text x="110" y="118.0" font-size="12" fill="#f0efec" text-anchor="end">Hitpoints</text>
 <path d="M120,109.0 h392.8 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-392.8 z" fill="#3987e5"/>
 <rect x="598.5" y="106.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="608.0" y="118.0" font-size="11" fill="#c3c2b7">62% / 75%</text></g>
-<g><title>Attack: bots 55%, target 70% (gap 15)</title>
+<g><title>Attack: bots 55%, goal 70% (gap 15)</title>
 <text x="110" y="142.0" font-size="12" fill="#f0efec" text-anchor="end">Attack</text>
 <path d="M120,133.0 h348.0 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-348.0 z" fill="#3987e5"/>
 <rect x="566.5" y="130.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="576.0" y="142.0" font-size="11" fill="#c3c2b7">55% / 70%</text></g>
-<g><title>Fishing: bots 51%, target 70% (gap 19)</title>
+<g><title>Fishing: bots 51%, goal 70% (gap 19)</title>
 <text x="110" y="166.0" font-size="12" fill="#f0efec" text-anchor="end">Fishing</text>
 <path d="M120,157.0 h322.4 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-322.4 z" fill="#3987e5"/>
 <rect x="566.5" y="154.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="576.0" y="166.0" font-size="11" fill="#c3c2b7">51% / 70%</text></g>
-<g><title>Strength: bots 50%, target 65% (gap 15)</title>
+<g><title>Strength: bots 50%, goal 65% (gap 15)</title>
 <text x="110" y="190.0" font-size="12" fill="#f0efec" text-anchor="end">Strength</text>
 <path d="M120,181.0 h316.0 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-316.0 z" fill="#3987e5"/>
 <rect x="534.5" y="178.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="544.0" y="190.0" font-size="11" fill="#c3c2b7">50% / 65%</text></g>
-<g><title>Defence: bots 45%, target 65% (gap 20)</title>
+<g><title>Defence: bots 45%, goal 65% (gap 20)</title>
 <text x="110" y="214.0" font-size="12" fill="#f0efec" text-anchor="end">Defence</text>
 <path d="M120,205.0 h284.0 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-284.0 z" fill="#3987e5"/>
 <rect x="534.5" y="202.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="544.0" y="214.0" font-size="11" fill="#c3c2b7">45% / 65%</text></g>
-<g><title>Fletching: bots 43%, target 60% (gap 17)</title>
+<g><title>Fletching: bots 43%, goal 60% (gap 17)</title>
 <text x="110" y="238.0" font-size="12" fill="#f0efec" text-anchor="end">Fletching</text>
 <path d="M120,229.0 h271.2 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-271.2 z" fill="#3987e5"/>
 <rect x="502.5" y="226.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="512.0" y="238.0" font-size="11" fill="#c3c2b7">43% / 60%</text></g>
-<g><title>Smithing: bots 42%, target 65% (gap 23)</title>
+<g><title>Smithing: bots 42%, goal 65% (gap 23)</title>
 <text x="110" y="262.0" font-size="12" fill="#f0efec" text-anchor="end">Smithing</text>
 <path d="M120,253.0 h264.8 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-264.8 z" fill="#3987e5"/>
 <rect x="534.5" y="250.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="544.0" y="262.0" font-size="11" fill="#c3c2b7">42% / 65%</text></g>
-<g><title>Cooking: bots 42%, target 55% (gap 13)</title>
+<g><title>Cooking: bots 42%, goal 55% (gap 13)</title>
 <text x="110" y="286.0" font-size="12" fill="#f0efec" text-anchor="end">Cooking</text>
 <path d="M120,277.0 h264.8 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-264.8 z" fill="#3987e5"/>
 <rect x="470.5" y="274.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="480.0" y="286.0" font-size="11" fill="#c3c2b7">42% / 55%</text></g>
-<g><title>Prayer: bots 40%, target 55% (gap 15)</title>
+<g><title>Prayer: bots 40%, goal 55% (gap 15)</title>
 <text x="110" y="310.0" font-size="12" fill="#f0efec" text-anchor="end">Prayer</text>
 <path d="M120,301.0 h252.0 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-252.0 z" fill="#3987e5"/>
 <rect x="470.5" y="298.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="480.0" y="310.0" font-size="11" fill="#c3c2b7">40% / 55%</text></g>
-<g><title>Thieving: bots 38%, target 60% (gap 22)</title>
+<g><title>Thieving: bots 38%, goal 60% (gap 22)</title>
 <text x="110" y="334.0" font-size="12" fill="#f0efec" text-anchor="end">Thieving</text>
 <path d="M120,325.0 h239.2 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-239.2 z" fill="#3987e5"/>
 <rect x="502.5" y="322.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="512.0" y="334.0" font-size="11" fill="#c3c2b7">38% / 60%</text></g>
-<g><title>Woodcutting: bots 37%, target 65% (gap 28)</title>
+<g><title>Woodcutting: bots 37%, goal 65% (gap 28)</title>
 <text x="110" y="358.0" font-size="12" fill="#f0efec" text-anchor="end">Woodcutting</text>
 <path d="M120,349.0 h232.8 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-232.8 z" fill="#3987e5"/>
 <rect x="534.5" y="346.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="544.0" y="358.0" font-size="11" fill="#c3c2b7">37% / 65%</text></g>
-<g><title>Ranged: bots 35%, target 55% (gap 20)</title>
+<g><title>Ranged: bots 35%, goal 55% (gap 20)</title>
 <text x="110" y="382.0" font-size="12" fill="#f0efec" text-anchor="end">Ranged</text>
 <path d="M120,373.0 h220.0 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-220.0 z" fill="#3987e5"/>
 <rect x="470.5" y="370.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="480.0" y="382.0" font-size="11" fill="#c3c2b7">35% / 55%</text></g>
-<g><title>Slayer: bots 29%, target 50% (gap 21)</title>
+<g><title>Slayer: bots 29%, goal 50% (gap 21)</title>
 <text x="110" y="406.0" font-size="12" fill="#f0efec" text-anchor="end">Slayer</text>
 <path d="M120,397.0 h181.6 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-181.6 z" fill="#3987e5"/>
 <rect x="438.5" y="394.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="448.0" y="406.0" font-size="11" fill="#c3c2b7">29% / 50%</text></g>
-<g><title>Magic: bots 28%, target 55% (gap 27)</title>
+<g><title>Magic: bots 28%, goal 55% (gap 27)</title>
 <text x="110" y="430.0" font-size="12" fill="#f0efec" text-anchor="end">Magic</text>
 <path d="M120,421.0 h175.2 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-175.2 z" fill="#3987e5"/>
 <rect x="470.5" y="418.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="480.0" y="430.0" font-size="11" fill="#c3c2b7">28% / 55%</text></g>
-<g><title>Firemaking: bots 28%, target 50% (gap 22)</title>
+<g><title>Firemaking: bots 28%, goal 50% (gap 22)</title>
 <text x="110" y="454.0" font-size="12" fill="#f0efec" text-anchor="end">Firemaking</text>
 <path d="M120,445.0 h175.2 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-175.2 z" fill="#3987e5"/>
 <rect x="438.5" y="442.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="448.0" y="454.0" font-size="11" fill="#c3c2b7">28% / 50%</text></g>
-<g><title>Agility: bots 28%, target 40% (gap 12)</title>
+<g><title>Agility: bots 28%, goal 40% (gap 12)</title>
 <text x="110" y="478.0" font-size="12" fill="#f0efec" text-anchor="end">Agility</text>
 <path d="M120,469.0 h175.2 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-175.2 z" fill="#3987e5"/>
 <rect x="374.5" y="466.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="384.0" y="478.0" font-size="11" fill="#c3c2b7">28% / 40%</text></g>
-<g><title>Crafting: bots 23%, target 50% (gap 27)</title>
+<g><title>Crafting: bots 23%, goal 50% (gap 27)</title>
 <text x="110" y="502.0" font-size="12" fill="#f0efec" text-anchor="end">Crafting</text>
 <path d="M120,493.0 h143.2 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-143.2 z" fill="#3987e5"/>
 <rect x="438.5" y="490.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="448.0" y="502.0" font-size="11" fill="#c3c2b7">23% / 50%</text></g>
-<g><title>Farming: bots 23%, target 45% (gap 22)</title>
+<g><title>Farming: bots 23%, goal 45% (gap 22)</title>
 <text x="110" y="526.0" font-size="12" fill="#f0efec" text-anchor="end">Farming</text>
 <path d="M120,517.0 h143.2 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-143.2 z" fill="#3987e5"/>
 <rect x="406.5" y="514.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="416.0" y="526.0" font-size="11" fill="#c3c2b7">23% / 45%</text></g>
-<g><title>Summoning: bots 21%, target 40% (gap 19)</title>
+<g><title>Summoning: bots 21%, goal 40% (gap 19)</title>
 <text x="110" y="550.0" font-size="12" fill="#f0efec" text-anchor="end">Summoning</text>
 <path d="M120,541.0 h130.4 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-130.4 z" fill="#3987e5"/>
 <rect x="374.5" y="538.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="384.0" y="550.0" font-size="11" fill="#c3c2b7">21% / 40%</text></g>
-<g><title>Runecrafting: bots 19%, target 45% (gap 26)</title>
+<g><title>Runecrafting: bots 19%, goal 45% (gap 26)</title>
 <text x="110" y="574.0" font-size="12" fill="#f0efec" text-anchor="end">Runecrafting</text>
 <path d="M120,565.0 h117.6 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-117.6 z" fill="#3987e5"/>
 <rect x="406.5" y="562.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="416.0" y="574.0" font-size="11" fill="#c3c2b7">19% / 45%</text></g>
-<g><title>Herblore: bots 18%, target 45% (gap 27)</title>
+<g><title>Herblore: bots 18%, goal 45% (gap 27)</title>
 <text x="110" y="598.0" font-size="12" fill="#f0efec" text-anchor="end">Herblore</text>
 <path d="M120,589.0 h111.2 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-111.2 z" fill="#3987e5"/>
 <rect x="406.5" y="586.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="416.0" y="598.0" font-size="11" fill="#c3c2b7">18% / 45%</text></g>
-<g><title>Hunter: bots 8%, target 30% (gap 22)</title>
+<g><title>Hunter: bots 8%, goal 30% (gap 22)</title>
 <text x="110" y="622.0" font-size="12" fill="#f0efec" text-anchor="end">Hunter</text>
 <path d="M120,613.0 h47.2 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-47.2 z" fill="#3987e5"/>
 <rect x="310.5" y="610.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>
 <text x="320.0" y="622.0" font-size="11" fill="#c3c2b7">8% / 30%</text></g>
-<g><title>Construction: bots 6%, target 25% (gap 19)</title>
+<g><title>Construction: bots 6%, goal 25% (gap 19)</title>
 <text x="110" y="646.0" font-size="12" fill="#f0efec" text-anchor="end">Construction</text>
 <path d="M120,637.0 h34.4 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-34.4 z" fill="#3987e5"/>
 <rect x="278.5" y="634.0" width="3" height="16" rx="1" fill="#d95926" stroke="#1a1a19" stroke-width="1"/>

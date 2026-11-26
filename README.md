@@ -6,37 +6,38 @@ four masters, run farm and herb loops, gather, craft, trade on the Grand Exchang
 quests, avoid danger, join crews, take breaks and get themselves unstuck. Bots are plain server classes
 loaded ahead of an unmodified `server.jar`. No outside AI service, nothing to pay for.
 
-> **Status (late November 2026):** this is the code running on my own server as of November 25, 2026
-> (build "train-80"). Updates come when I have time; pull requests are welcome, see
-> [CONTRIBUTING.md](CONTRIBUTING.md). Not affiliated with or endorsed by Jagex or the 2009scape project.
+> **Status (November 2026):** the newer behaviour is behind switches that are off by default, so a
+> fresh install starts quiet; turn on the recommended set (below) to get everything on this page.
+> Pull requests are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). Not affiliated with or endorsed by Jagex or the 2009scape project.
 
-## What's new since the November 7 release
+## What's new (November 2026)
 
 The big change: bots now **train skills the way players do**, not just gather and fight. Every new
-behaviour sits behind its own switch, is off by default, and was tested on throwaway worlds (paired
-runs with the switch on and off, plus scripted scenarios) before it went on the live server.
-[deployment/live-flags.txt](deployment/live-flags.txt) lists the 83 switches that are on there today.
+behaviour sits behind its own switch and is off by default. Each was tested in paired runs (switch on
+and off) and scripted scenarios before being added to the recommended set:
+[deployment/recommended-flags.txt](deployment/recommended-flags.txt) lists those 83 switches, with a
+one-line command to pass them all.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/skills-vs-target-dark.svg">
-  <img alt="Bar chart: estimated share of each skill the bots do compared with a real 2009 player, November 25 2026. Highest Mining 64% (target 75%), Hitpoints 62% (75%), Attack 55% (70%), Fishing 51% (70%). Lowest Construction 6% (25%), Hunter 8% (30%), Herblore 18% (45%), Runecrafting 19% (45%). Mean 34.8% against a 54.6% target." src="docs/img/skills-vs-target-light.svg" width="820">
+  <img alt="Bar chart: estimated share of each skill the bots do compared with a real 2009 player, with the recommended switches on. Highest Mining 64% (goal 75%), Hitpoints 62% (75%), Attack 55% (70%), Fishing 51% (70%). Lowest Construction 6% (25%), Hunter 8% (30%), Herblore 18% (45%), Runecrafting 19% (45%). Mean 34.8% against a 54.6% goal." src="docs/img/skills-vs-target-light.svg" width="820">
 </picture>
 
-How to read it: for each skill, how much of what a real 2009 player does there the bots actually do
-on the live server, judged from 24 hours of logs (only behaviour seen firing counts). It is an
-estimate, not a measurement. The mean went from 26.7% (November 20) to 34.8% (November 25); the
-orange marks are where I am aiming. The rest of the gap is mostly built and waiting to be switched on.
+How to read it: for each skill, roughly how much of what a real 2009 player does there the bots do
+with the recommended switches on, judged from a day of server logs (only behaviour seen happening
+counts). It is an estimate, not a measurement. The orange mark is the goal for each skill; the gap is
+the work still to come.
 
 Highlights, by area (full list in [docs/CHANGELOG.md](docs/CHANGELOG.md)):
 
 * **Combat skills:** stance plans and a Defence share, weapons chosen for the monster, special attack
   weapons, amulets and armour above rune, a melee fallback for rangers, safe retreats when a fight goes
   wrong, cheaper food.
-* **Slayer:** Turael and Vannaka, plus Chaeldar and Duradel (in this code; switched on last, so not in
-  live-flags.txt yet), with points, banking first, tasks that fit the
+* **Slayer:** Turael and Vannaka, plus Chaeldar and Duradel (off and not in the recommended set yet;
+  turn on `bots.slayer.chaeldar` and `bots.slayer.duradel` to try them), with points, banking first, tasks that fit the
   bot's purse, and fixes for the bats, ice giants and the Vannaka door.
 * **Summoning:** Wolf Whistle, pouches, healing and combat familiars, and the beast of burden (first
-  used by a live bot on November 25).
+  picked up by a bot at Summoning 13).
 * **Gathering:** Mining and Fishing Guilds, sharks, power mining, tree and herb farm runs, Hunter
   (birds), Barbarian agility laps, Ardougne pickpocketing, nature and law rune runs.
 * **Artisan skills:** smiths smelt their own bars, fletchers make arrows and their own bows, cooks burn
@@ -132,7 +133,7 @@ quest runner) are in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
 4. Start the server with `overlay` ahead of `server.jar` on the classpath.
 5. Watch for `[SmartAdv]`, `[Artisans]` and `[Watchdog]` lines on the console.
 6. Optional: turn on the skill and Slayer behaviour with the switches in
-   [deployment/live-flags.txt](deployment/live-flags.txt) (all off by default).
+   [deployment/recommended-flags.txt](deployment/recommended-flags.txt) (all off by default).
 
 Every step with the exact commands and every flag is in [INSTALL.md](INSTALL.md).
 
@@ -144,7 +145,7 @@ Every step with the exact commands and every flag is in [INSTALL.md](INSTALL.md)
 * [docs/TECHNICAL-REFERENCE.md](docs/TECHNICAL-REFERENCE.md): the long version, class by class.
 * [docs/questing-bots.md](docs/questing-bots.md): how the quest scripts work and how to add one.
 * [docs/CHANGELOG.md](docs/CHANGELOG.md): what shipped, by month.
-* [deployment/live-flags.txt](deployment/live-flags.txt): the switches on the author's server today.
+* [deployment/recommended-flags.txt](deployment/recommended-flags.txt): the recommended feature switches.
 * [deployment/tests/README.md](deployment/tests/README.md): the test harness (throwaway worlds on
   `127.0.0.1`, never a live server).
 

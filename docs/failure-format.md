@@ -3,7 +3,7 @@
 Code: `content/custom/Failures.java`. Tools: `deployment/tests/tools/bugs.py` (read-only), `deployment/tests/survey-merge.py`
 (bugs.json merge). This is **logging only**: nothing here changes what a bot does.
 
-Files (all under the scenarios results folder, `data/survey` on live):
+Files (all under the scenarios results folder, `data/survey` on a running server):
 
 | file | written by | mode | cap | kept |
 |---|---|---|---|---|
@@ -128,7 +128,7 @@ Merge rules (`Failures.Bugs.save` and `survey-merge.py merge_bugs`, the same rul
 3. Status: owner > live > farm. `not-reproduced` and `fixed-in-batch-N` (when the build's `Failures.BATCH >= N`) go back to `open`
    on a new live record, note prefixed `reopened <date>: `; `wont-fix` never changes by machine; an owner status is changed only by
    that reopen rule. `open -> not-reproduced` when the newest 3 replays in 7 days are `pass` and no live record came since the
-   oldest of those 3 ([Fable] reading of "no live record in those 7 days": since the passes started); the farm may only make that
+   oldest of those 3; the farm may only make that
    move when live did not record the bug after `pulled.txt`'s time, otherwise its proposal is added to `replays` as result
    `proposal` and the status stays.
 4. Nothing live is lost: `survey-merge.py` exits 2 when a seed id is missing or its `count`, `first`, `note` or owner status changed.

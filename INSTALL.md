@@ -87,8 +87,7 @@ Every add-on tick is wrapped in a `try/catch`, so one bot's failure is logged as
 
 ## 6. Flags
 
-All switches are `-D` system properties on the `java` command line. Defaults are what ran on my
-server.
+All switches are `-D` system properties on the `java` command line. The defaults suit a small server.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -117,8 +116,8 @@ server.
 
 **Skill, Slayer and economy switches (late November 2026).** The newer switches, named
 `bots.*`, `artisans.*`, `clerk.*`, `coinwatch.*`, `market.*`, `nav.*` or `quest.*`, are off by default.
-[deployment/live-flags.txt](deployment/live-flags.txt) lists the 83 that ran on the author's server
-on November 25, 2026, with a one-line command to pass them all. [docs/CHANGELOG.md](docs/CHANGELOG.md)
+[deployment/recommended-flags.txt](deployment/recommended-flags.txt) lists the 83 recommended ones,
+with a one-line command to pass them all. [docs/CHANGELOG.md](docs/CHANGELOG.md)
 says what each group does. Never pass `smartbots.seed.*`, `scen.*` or `test.*` on a real server (they
 refuse to run there anyway).
 

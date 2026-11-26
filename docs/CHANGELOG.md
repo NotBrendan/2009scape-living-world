@@ -1,16 +1,14 @@
 # Change log
 
-What shipped, newest first, condensed from the private tracker (which logged every build with its
-live time). Bug numbers refer to a register that is not published; the behaviour is described in
+What shipped, newest first, condensed. Bug numbers refer to a register that is not published; the behaviour is described in
 [bot-behaviour.md](bot-behaviour.md) and [TECHNICAL-REFERENCE.md](TECHNICAL-REFERENCE.md).
 
-## Late November 2026 (code as of November 25, build train-80)
+## Late November 2026
 
-Everything below is behind its own `-D` switch and **off by default**. The switches that were on on
-the author's server on November 25 are listed in
-[../deployment/live-flags.txt](../deployment/live-flags.txt). Each one went through paired test runs
-(switch on vs off on two throwaway worlds) and, where it moves coins, a scripted scenario before it
-was switched on.
+Everything below is behind its own `-D` switch and **off by default**. The recommended set is in
+[../deployment/recommended-flags.txt](../deployment/recommended-flags.txt). Each one went through
+paired test runs (switch on vs off) and, where it moves coins, a scripted scenario before it was
+added to that set.
 
 * **Skill training spread:** bots share their time across skills (`bots.jobShare`), stop picking
   jobs that give no experience (`bots.brokeJob.zeroSkip`), and use the Mining and Fishing Guilds
@@ -23,7 +21,7 @@ was switched on.
   (`bots.fight.cheapFood`), and safe retreats (`bots.fight.safeRetreat`, `bots.fight.karaRetreat`).
 * **Slayer:** Vannaka with points, banking first and tasks a poor bot can afford (`bots.slayer.*`),
   fixes for bats, ice giants, Vannaka's door and the errand cap. Chaeldar and Duradel are in the
-  code (`bots.slayer.chaeldar`, `bots.slayer.duradel`) and were switched on last.
+  code (`bots.slayer.chaeldar`, `bots.slayer.duradel`) but not yet in the recommended set.
 * **Summoning:** Wolf Whistle and pouches (`bots.summoning.*`), healing and combat familiars, and the
   beast of burden (`bots.summoning.bob`), which carries a pack from Summoning 13.
 * **Farming and Hunter:** herb runs with better seeds (`bots.farming.herbs2`), tree runs

@@ -14,8 +14,8 @@ Adventurer bots now do real quests: they walk to the quest giver, click through 
 | `QuestCooksAssistant/SheepShearer/DoricsQuest/WitchsPotion/ImpCatcher.java` | Wave 1 scripts. |
 | `QuestFloors.java` | Wave 2: the floor walker (see below). |
 | `QuestRuneMysteries/RestlessGhost/RomeoAndJuliet/VampireSlayer/GoblinDiplomacy.java` | Wave 2 scripts that are live. |
-| `QuestKnightsSword/PiratesTreasure.java` | Batch 5 scripts that are live (05:48 UTC 10-23). Prince Ali, Black Knights', Ernest and Shield of Arrav are registered but off by default (see the end). |
-| `QuestDruidicRitual.java` | Batch 8 script that is live (08:56 UTC 10-23). |
+| `QuestKnightsSword/PiratesTreasure.java` | Batch , on by default. Prince Ali, Black Knights', Ernest and Shield of Arrav are registered but off by default (see the end). |
+| `QuestDruidicRitual.java` | Batch , on by default. |
 
 Hooks in existing files: `SmartAdventurers.Brain.think` (a questing bot is left to its QuestRunner; resume a half-done quest; start the quest `chooseJob` picked), `chooseJob` (quest offer vs the best job), `restore` (attributes + stages before `seedQuests`), `shutdown` (quests saved after graves, before profiles); `AfkTasks.Runner.questHold` (no dialogue closing, haul kept, quest spots in `relocate`); `Gates.seedQuests` (`QuestBook.skipSeed`); `Watchdog` (instances never stuck; quest walks count as trying); `Ledger` (`questPaid`, `questItems`).
 

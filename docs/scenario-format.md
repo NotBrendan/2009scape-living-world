@@ -2,7 +2,7 @@
 
 The code is `content/custom/Scenarios.java`; its class comment is the short version of this file.
 
-A **scenario** is one walk that went wrong on live (or a walk nobody has proven yet): a start tile, a destination, the walker that was used and why it is interesting. **Rescue replayers** (`-Dsurvey.replay`, default 3) walk scenarios again and write a **result**. The spare-PC farm reads and writes the same two files.
+A **scenario** is one walk that went wrong on a running server (or a walk nobody has proven yet): a start tile, a destination, the walker that was used and why it is interesting. **Rescue replayers** (`-Dsurvey.replay`, default 3) walk scenarios again and write a **result**. Test tooling outside the server can read and write the same two files.
 
 ## Files and paths
 
@@ -12,7 +12,7 @@ A **scenario** is one walk that went wrong on live (or a walk nobody has proven 
 | `data/survey/scenario-results.jsonl` | one result per line, appended | the replayers (`Replayer.end`) |
 
 - In the server: `-Dscenarios.dir=<folder>` moves `scenarios.jsonl`, and `-Dscenarios.results.dir=<folder>` moves the results (default: the scenarios folder, else `data/survey`).
-- Farm tooling (scripts outside the server) reads its paths from `<farm root>\farm\layout.json` when that file exists (`scenarios`, `results`, `worlds`, `liveSeed`). Never hardcode the farm root. Without a layout, it uses the harness world's `qt/game/data/survey`.
+- Test tooling outside the server may keep its own copies of these files.
 - Lines are UTF-8 JSON objects. A line that doesn't parse is skipped on read (`Scenarios.readLines`), so a torn last line after a crash costs one record and nothing else.
 
 ## Scenario record (`scenarios.jsonl`)

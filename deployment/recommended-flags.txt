@@ -1,5 +1,5 @@
-# Feature switches that were ON on the author's server on 2026-11-25 (train-80, the code in this repo).
-# Every one is default OFF in the code, so a fresh server behaves like the older releases until you turn them on.
+# Recommended feature switches: the full skill, Slayer, Summoning and economy behaviour, tested together.
+# Every one is OFF by default in the code, so a fresh server behaves like the older releases until you turn them on.
 # One switch per line. To use them all, add them to the java command line, e.g. (Linux):
 #   java $(grep -v '^#' deployment/live-flags.txt | sed 's/^/-D/; s/$/=true/' | tr '
 ' ' ') -cp overlay:server.jar core.Server
